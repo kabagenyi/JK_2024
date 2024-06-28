@@ -1,0 +1,813 @@
+---
+title: "Multi-NicheNet analysis BioMalPar"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+```{r}
+# install.packages("devtools")
+devtools::install_github("saeyslab/nichenetr")
+devtools::install_github("saeyslab/multinichenetr")
+
+```
+
+
+```{r}
+rm(list=ls())
+```
+
+
+```{r}
+library(SingleCellExperiment)
+library(dplyr)
+library(ggplot2)
+library(multinichenetr)
+```
+Import data rds file
+```{r}
+chabaudi_combined <- readRDS("~/Documents/PhD_Project/Analysis/all_chabaudi_combined_labelled.rds")
+DefaultAssay(chabaudi_combined)
+unique(Idents(chabaudi_combined))
+DimPlot(chabaudi_combined, label = T) + NoLegend()
+```
+The reference dataset
+```{r}
+organism = "mouse"
+if(organism == "human"){
+  lr_network = readRDS(url("https://zenodo.org/record/7074291/files/lr_network_human_21122021.rds"))
+  lr_network = lr_network %>% dplyr::rename(ligand = from, receptor = to) %>% distinct(ligand, receptor) %>% mutate(ligand = make.names(ligand), receptor = make.names(receptor))
+  ligand_target_matrix = readRDS("/Users/joycekabagenyi/ligand_target_matrix_nsga2r_final.rds")
+  colnames(ligand_target_matrix) = colnames(ligand_target_matrix) %>% make.names()
+  rownames(ligand_target_matrix) = rownames(ligand_target_matrix) %>% make.names()
+} else if(organism == "mouse"){
+  lr_network = readRDS(url("https://zenodo.org/record/7074291/files/lr_network_mouse_21122021.rds"))
+  lr_network = lr_network %>% dplyr::rename(ligand = from, receptor = to) %>% distinct(ligand, receptor) %>% mutate(ligand = make.names(ligand), receptor = make.names(receptor))
+  ligand_target_matrix = readRDS("/Users/joycekabagenyi/ligand_target_matrix_nsga2r_final_mouse.rds")
+  colnames(ligand_target_matrix) = colnames(ligand_target_matrix) %>% make.names()
+  rownames(ligand_target_matrix) = rownames(ligand_target_matrix) %>% make.names()
+}
+```
+
+
+Convert my seurat object into a singleR object # Starting with the bone marrow then spleen
+```{r}
+BM_chabaudi.combined <- subset(chabaudi_combined, Tissue == "bone_marrow") # Subset seurat object
+BM_chabaudi.combined@meta.data[["consensuscall"]] <- ifelse(is.na(BM_chabaudi.combined@meta.data[["consensuscall"]]) == TRUE, BM_chabaudi.combined@meta.data[["Condition"]],BM_chabaudi.combined@meta.data[["consensuscall"]])
+unique(BM_chabaudi.combined@meta.data[["consensuscall"]])
+
+BM_chabaudi.combined$sampleID <- (ifelse(is.na(BM_chabaudi.combined@meta.data[["TimePoint"]]) == FALSE,
+                                    paste(BM_chabaudi.combined@meta.data[["consensuscall"]],BM_chabaudi.combined@meta.data[["TimePoint"]], sep = "_"),BM_chabaudi.combined@meta.data[["Condition"]]))
+
+# Merge pre- and pro- B cells to B cells and Pro-Neutrophils to Neutrophils
+BM_chabaudi.combined <- RenameIdents(BM_chabaudi.combined, 
+          "Pro-B cells" = "B cells", "Pre-B cells" = "B cells","Neutrophil Progenitors" = "Neutrophils")
+BM_chabaudi.combined$cell_types <- Idents(BM_chabaudi.combined)
+
+sce_chabaudi = Seurat::as.SingleCellExperiment(BM_chabaudi.combined, assay = "RNA")
+sce_chabaudi = alias_to_symbol_SCE(sce_chabaudi, "mouse") %>% makenames_SCE()
+```
+
+```{r}
+sample_id = "sampleID"
+group_id = "TimePoint"
+celltype_id = "cell_types"
+covariates = NA
+batches = NA
+```
+
+
+
+```{r}
+SummarizedExperiment::colData(sce_chabaudi)$sampleID = SummarizedExperiment::colData(sce_chabaudi)$sampleID %>% make.names()
+SummarizedExperiment::colData(sce_chabaudi)$TimePoint = SummarizedExperiment::colData(sce_chabaudi)$TimePoint %>% make.names()
+SummarizedExperiment::colData(sce_chabaudi)$cell_types = SummarizedExperiment::colData(sce_chabaudi)$cell_types %>% make.names()
+
+unique(colData(sce_chabaudi)$sampleID)
+unique(colData(sce_chabaudi)$TimePoint)
+unique(colData(sce_chabaudi)$cell_types)
+
+```
+
+```{r}
+senders_oi = SummarizedExperiment::colData(sce_chabaudi)[,celltype_id] %>% unique()
+senders_oi = senders_oi[-c(2,6,10)] # Ignore erythroblasts and HSPCs
+receivers_oi = SummarizedExperiment::colData(sce_chabaudi)[,celltype_id] %>% unique()
+receivers_oi = receivers_oi[-c(2,6,10)] # Ignore erythroblasts and HSPCs
+```
+
+Subset or obeject if we want to use just a set of our cells
+```{r}
+sce_chabaudi = sce_chabaudi[, SummarizedExperiment::colData(sce_chabaudi)[,celltype_id] %in% c(senders_oi, receivers_oi)] 
+# cell type abundance and expression information from receiver and sender cell types
+abundance_expression_info = get_abundance_expression_info(sce = sce_chabaudi, sample_id = "sampleID", group_id = "TimePoint", celltype_id = "cell_types", min_cells = min_cells, senders_oi = senders_oi, receivers_oi = receivers_oi, lr_network = lr_network, batches = batches)
+
+abundance_expression_info$abund_plot_sample
+abundance_expression_info$abund_plot_group
+```
+DE
+```{r}
+DE_info = get_DE_info(sce = sce_chabaudi, sample_id = "sampleID", group_id = "TimePoint", celltype_id = "cell_types", batches = batches, covariates = covariates, contrasts_oi = contrasts_oi, min_cells = min_cells)
+
+DE_info$hist_pvals
+```
+
+
+
+
+
+
+
+
+
+
+
+---------TWO TIMEPOINT COMPARIAONS
+
+```{r}
+min_cells = 5 #Set minimum number of cells per cell type for any cell cluster to be considered for analysis
+contrasts_oi = c("'TP_N1-TP_T2','TP_T2-TP_N1'")
+contrast_tbl = tibble(
+  contrast = c("TP_N1-TP_T2","TP_T2-TP_N1"), 
+  group = c("TP_N1","TP_T2"))
+```
+
+We subset the data to keep only cells from our timepoints that we want to compare first
+```{r}
+sce_chabaudi_subset = sce_chabaudi[, SummarizedExperiment::colData(sce_chabaudi)[,group_id] %in% contrast_tbl$group]
+```
+
+We then set cut offs for different parameters important for DGE analysis and what P-values to consider for further analysis
+```{r}
+logFC_threshold = 0.5 # Instead of 0.5
+p_val_threshold = 0.05
+fraction_cutoff = 0.3
+# p_val_adj = TRUE 
+p_val_adj = FALSE 
+empirical_pval = FALSE
+```
+
+For the NicheNet ligand-target inference, we also need to select which top n of the predicted target genes will be considered (here: top 250 targets per ligand).
+```{r}
+top_n_target = 250
+# Then set multicore analysis to process faster
+cores_system = 8
+n.cores = min(cores_system, union(senders_oi, receivers_oi) %>% length()) # use one core per receiver cell type
+```
+
+Define the weights of the prioritization of both expression, differential expression and NicheNet activity information
+```{r}
+prioritizing_weights_DE = c("de_ligand" = 1,
+                         "de_receptor" = 1)
+prioritizing_weights_activity = c("activity_scaled" = 2)
+
+prioritizing_weights_expression_specificity = c("exprs_ligand" = 2,
+                         "exprs_receptor" = 2)
+
+prioritizing_weights_expression_sufficiency = c("frac_exprs_ligand_receptor" = 1)
+
+prioritizing_weights_relative_abundance = c( "abund_sender" = 0,
+                         "abund_receiver" = 0)
+
+prioritizing_weights = c(prioritizing_weights_DE, 
+                         prioritizing_weights_activity, 
+                         prioritizing_weights_expression_specificity,
+                         prioritizing_weights_expression_sufficiency, 
+                         prioritizing_weights_relative_abundance)
+```
+
+
+Perform MultiNicheNet’s cell-cell communication analysis
+```{r}
+multinichenet_output = multi_nichenet_analysis(sce = sce_chabaudi_subset, celltype_id = celltype_id, sample_id = sample_id, group_id = group_id, 
+                                lr_network = lr_network, ligand_target_matrix = ligand_target_matrix, contrasts_oi = contrasts_oi, contrast_tbl = contrast_tbl, batches = batches, covariates = covariates,
+                                prioritizing_weights = prioritizing_weights, min_cells = min_cells, logFC_threshold = logFC_threshold, p_val_threshold = p_val_threshold,  
+                                fraction_cutoff = fraction_cutoff, p_val_adj = p_val_adj, empirical_pval = empirical_pval, top_n_target = top_n_target, n.cores = n.cores, sender_receiver_separate = FALSE, verbose = TRUE)
+
+```
+Save output
+```{r}
+BM_TPN1_vs_TP2 <- multinichenet_output
+BM_TPN1_vs_TP2_merged <- multinichenet_output
+```
+
+NOW TP_N1 AND TP_TP4
+
+```{r}
+min_cells = 5 #Set minimum number of cells per cell type for any cell cluster to be considered for analysis
+contrasts_oi = c("'TP_N1-TP_T4','TP_T4-TP_N1'")
+contrast_tbl = tibble(
+  contrast = c("TP_N1-TP_T4","TP_T4-TP_N1"), 
+  group = c("TP_N1","TP_T4"))
+
+```
+
+We subset the data to keep only cells from our timepoints that we want to compare first
+```{r}
+sce_chabaudi_subset = sce_chabaudi[, SummarizedExperiment::colData(sce_chabaudi)[,group_id] %in% contrast_tbl$group]
+```
+
+We then set cut offs for different parameters important for DGE analysis and what P-values to consider for further analysis
+```{r}
+logFC_threshold = 0.5 # Instead of 0.5
+p_val_threshold = 0.05
+fraction_cutoff = 0.05
+# p_val_adj = TRUE 
+p_val_adj = FALSE 
+empirical_pval = FALSE
+```
+
+For the NicheNet ligand-target inference, we also need to select which top n of the predicted target genes will be considered (here: top 250 targets per ligand).
+```{r}
+top_n_target = 250
+# Then set multicore analysis to process faster
+cores_system = 8
+n.cores = min(cores_system, union(senders_oi, receivers_oi) %>% length()) # use one core per receiver cell type
+```
+
+Define the weights of the prioritization of both expression, differential expression and NicheNet activity information
+```{r}
+prioritizing_weights_DE = c("de_ligand" = 1,
+                         "de_receptor" = 1)
+prioritizing_weights_activity = c("activity_scaled" = 2)
+
+prioritizing_weights_expression_specificity = c("exprs_ligand" = 2,
+                         "exprs_receptor" = 2)
+
+prioritizing_weights_expression_sufficiency = c("frac_exprs_ligand_receptor" = 1)
+
+prioritizing_weights_relative_abundance = c( "abund_sender" = 0,
+                         "abund_receiver" = 0)
+
+prioritizing_weights = c(prioritizing_weights_DE, 
+                         prioritizing_weights_activity, 
+                         prioritizing_weights_expression_specificity,
+                         prioritizing_weights_expression_sufficiency, 
+                         prioritizing_weights_relative_abundance)
+```
+
+
+Perform MultiNicheNet’s cell-cell communication analysis
+```{r}
+multinichenet_output = multi_nichenet_analysis(sce = sce_chabaudi_subset, celltype_id = celltype_id, sample_id = sample_id, group_id = group_id, 
+                                lr_network = lr_network, ligand_target_matrix = ligand_target_matrix, contrasts_oi = contrasts_oi, contrast_tbl = contrast_tbl, batches = batches, covariates = covariates,
+                                prioritizing_weights = prioritizing_weights, min_cells = min_cells, logFC_threshold = logFC_threshold, p_val_threshold = p_val_threshold,  
+                                fraction_cutoff = fraction_cutoff, p_val_adj = p_val_adj, empirical_pval = empirical_pval, top_n_target = top_n_target, n.cores = n.cores, sender_receiver_separate = FALSE, verbose = TRUE)
+
+```
+Save output
+```{r}
+BM_TPN1_vs_TP4 <- multinichenet_output
+BM_TPN1_vs_TP4_merged <- multinichenet_output
+```
+
+
+
+
+
+
+**********************SPLEEN
+
+Convert my seurat object into a singleR object # Starting with the bone marrow then spleen
+```{r}
+SP_chabaudi.combined <- subset(chabaudi_combined, Tissue == "spleen") # Import RDS
+SP_chabaudi.combined@meta.data[["consensuscall"]] <- ifelse(is.na(SP_chabaudi.combined@meta.data[["consensuscall"]]) == TRUE, SP_chabaudi.combined@meta.data[["Condition"]],SP_chabaudi.combined@meta.data[["consensuscall"]])
+unique(SP_chabaudi.combined@meta.data[["consensuscall"]])
+
+SP_chabaudi.combined$sampleID <- (ifelse(is.na(SP_chabaudi.combined@meta.data[["TimePoint"]]) == FALSE,
+                                    paste(SP_chabaudi.combined@meta.data[["consensuscall"]],SP_chabaudi.combined@meta.data[["TimePoint"]], sep = "_"),SP_chabaudi.combined@meta.data[["Condition"]]))
+#BM_chabaudi.combined
+sce_chabaudi = Seurat::as.SingleCellExperiment(SP_chabaudi.combined, assay = "RNA")
+sce_chabaudi = alias_to_symbol_SCE(sce_chabaudi, "mouse") %>% makenames_SCE()
+```
+
+```{r}
+sample_id = "sampleID"
+group_id = "TimePoint"
+celltype_id = "cell_types"
+covariates = NA
+batches = NA
+```
+
+
+```{r}
+SummarizedExperiment::colData(sce_chabaudi)$sampleID = SummarizedExperiment::colData(sce_chabaudi)$sampleID %>% make.names()
+SummarizedExperiment::colData(sce_chabaudi)$TimePoint = SummarizedExperiment::colData(sce_chabaudi)$TimePoint %>% make.names()
+SummarizedExperiment::colData(sce_chabaudi)$cell_types = SummarizedExperiment::colData(sce_chabaudi)$cell_types %>% make.names()
+
+unique(colData(sce_chabaudi)$sampleID)
+unique(colData(sce_chabaudi)$TimePoint)
+unique(colData(sce_chabaudi)$cell_types)
+
+```
+
+```{r}
+senders_oi = SummarizedExperiment::colData(sce_chabaudi)[,celltype_id] %>% unique()
+senders_oi = senders_oi[-c(1,7)] # Ignore erythroblasts and HSPCs
+receivers_oi = SummarizedExperiment::colData(sce_chabaudi)[,celltype_id] %>% unique()
+receivers_oi = receivers_oi[-c(1,7)] # Ignore erythroblasts and HSPCs
+```
+
+Subset or obeject if we want to use just a set of our cells
+```{r}
+sce_chabaudi = sce_chabaudi[, SummarizedExperiment::colData(sce_chabaudi)[,celltype_id] %in% c(senders_oi, receivers_oi)]
+
+# cell type abundance and expression information from receiver and sender cell types
+abundance_expression_info = get_abundance_expression_info(sce = sce_chabaudi, sample_id = "sampleID", group_id = "TimePoint", celltype_id = "cell_types", min_cells = min_cells, senders_oi = senders_oi, receivers_oi = receivers_oi, lr_network = lr_network, batches = batches)
+
+abundance_expression_info$abund_plot_sample
+abundance_expression_info$abund_plot_group
+```
+
+
+DE
+```{r}
+DE_info = get_DE_info(sce = sce_chabaudi, sample_id = "sampleID", group_id = "TimePoint", celltype_id = "cell_types", batches = batches, covariates = covariates, contrasts_oi = contrasts_oi, min_cells = min_cells)
+
+DE_info$hist_pvals
+```
+
+
+_______THREE TIMEPOINTS COMPARISONS
+
+Bone Marrow
+
+```{r}
+contrasts_oi = c("'TP_N1-(TP_T2+TP_T4)/2','TP_T2-(TP_N1+TP_T4)/2','TP_T4-(TP_T2+TP_N1)/2'")
+contrast_tbl = tibble(contrast = 
+                        c("TP_N1-(TP_T2+TP_T4)/2","TP_T2-(TP_N1+TP_T4)/2", "TP_T4-(TP_T2+TP_N1)/2"), 
+                      group = c("TP_N1","TP_T2","TP_T4"))
+
+# Perform DE for each cell type
+DE_info = get_DE_info(sce = sce, sample_id = sample_id, group_id = group_id, celltype_id = celltype_id, batches = batches, covariates = covariates, contrasts_oi = contrasts_oi, min_cells = min_cells)
+
+DE_info$hist_pvals # View DE out puts
+
+sce_chabaudi_subset = sce_chabaudi[, SummarizedExperiment::colData(sce_chabaudi)[,group_id] %in% contrast_tbl$group]
+```
+
+We then set cut offs for different parameters important for DGE analysis and what P-values to consider for further analysis
+```{r}
+logFC_threshold = 0.5 # Instead of 0.5
+p_val_threshold = 0.05
+fraction_cutoff = 0.05
+# p_val_adj = TRUE 
+p_val_adj = FALSE 
+empirical_pval = FALSE
+
+# For the NicheNet ligand-target inference, we also need to select which top n of the predicted target genes will be considered (here: top 250 targets per ligand).
+top_n_target = 250
+cores_system = 8 # Then set multicore analysis to process faster
+n.cores = min(cores_system, union(senders_oi, receivers_oi) %>% length()) # use one core per receiver cell type
+
+
+
+# Define the weights of the prioritization of both expression, differential expression and NicheNet activity information
+prioritizing_weights_DE = c("de_ligand" = 1,
+                         "de_receptor" = 1)
+prioritizing_weights_activity = c("activity_scaled" = 2)
+
+prioritizing_weights_expression_specificity = c("exprs_ligand" = 2,
+                         "exprs_receptor" = 2)
+
+prioritizing_weights_expression_sufficiency = c("frac_exprs_ligand_receptor" = 1)
+
+prioritizing_weights_relative_abundance = c( "abund_sender" = 0,
+                         "abund_receiver" = 0)
+
+prioritizing_weights = c(prioritizing_weights_DE, 
+                         prioritizing_weights_activity, 
+                         prioritizing_weights_expression_specificity,
+                         prioritizing_weights_expression_sufficiency, 
+                         prioritizing_weights_relative_abundance)
+
+# Perform MultiNicheNet’s cell-cell communication analysis
+
+multinichenet_output = multi_nichenet_analysis(sce = sce_chabaudi_subset, celltype_id = celltype_id, sample_id = sample_id, group_id = group_id, 
+                                lr_network = lr_network, ligand_target_matrix = ligand_target_matrix, contrasts_oi = contrasts_oi, contrast_tbl = contrast_tbl, batches = batches, covariates = covariates,
+                                prioritizing_weights = prioritizing_weights, min_cells = min_cells, logFC_threshold = logFC_threshold, p_val_threshold = p_val_threshold,  
+                                fraction_cutoff = fraction_cutoff, p_val_adj = p_val_adj, empirical_pval = empirical_pval, top_n_target = top_n_target, n.cores = n.cores, sender_receiver_separate = FALSE, verbose = TRUE)
+
+```
+
+
+
+
+----- TWO TIMEPOINT COMPARISONS
+
+```{r}
+min_cells = 5 #Set minimum number of cells per cell type for any cell cluster to be considered for analysis
+contrasts_oi = c("'TP_N1-TP_T2','TP_T2-TP_N1'")
+contrast_tbl = tibble(
+  contrast = c("TP_N1-TP_T2","TP_T2-TP_N1"), 
+  group = c("TP_N1","TP_T2"))
+```
+
+TP2_vsTP4
+```{r}
+min_cells = 5 #Set minimum number of cells per cell type for any cell cluster to be considered for analysis
+contrasts_oi = c("'TP_T4-TP_T2','TP_T2-TP_T4'")
+contrast_tbl = tibble(
+  contrast = c("TP_T4-TP_T2","TP_T2-TP_T4"), 
+  group = c("TP_T4","TP_T2"))
+```
+
+
+We subset the data to keep only cells from our timepoints that we want to compare first
+```{r}
+sce_chabaudi_subset = sce_chabaudi[, SummarizedExperiment::colData(sce_chabaudi)[,group_id] %in% contrast_tbl$group]
+```
+
+We then set cut offs for different parameters important for DGE analysis and what P-values to consider for further analysis
+```{r}
+logFC_threshold = 0.5 # Instead of 0.5
+p_val_threshold = 0.05
+fraction_cutoff = 0.05
+# p_val_adj = TRUE 
+p_val_adj = FALSE 
+empirical_pval = FALSE
+```
+
+For the NicheNet ligand-target inference, we also need to select which top n of the predicted target genes will be considered (here: top 250 targets per ligand).
+```{r}
+top_n_target = 250
+# Then set multicore analysis to process faster
+cores_system = 8
+n.cores = min(cores_system, union(senders_oi, receivers_oi) %>% length()) # use one core per receiver cell type
+```
+
+Define the weights of the prioritization of both expression, differential expression and NicheNet activity information
+```{r}
+prioritizing_weights_DE = c("de_ligand" = 1,
+                         "de_receptor" = 1)
+prioritizing_weights_activity = c("activity_scaled" = 2)
+
+prioritizing_weights_expression_specificity = c("exprs_ligand" = 2,
+                         "exprs_receptor" = 2)
+
+prioritizing_weights_expression_sufficiency = c("frac_exprs_ligand_receptor" = 1)
+
+prioritizing_weights_relative_abundance = c( "abund_sender" = 0,
+                         "abund_receiver" = 0)
+
+prioritizing_weights = c(prioritizing_weights_DE, 
+                         prioritizing_weights_activity, 
+                         prioritizing_weights_expression_specificity,
+                         prioritizing_weights_expression_sufficiency, 
+                         prioritizing_weights_relative_abundance)
+```
+
+
+Perform MultiNicheNet’s cell-cell communication analysis
+```{r}
+multinichenet_output = multi_nichenet_analysis(sce = sce_chabaudi_subset, celltype_id = celltype_id, sample_id = sample_id, group_id = group_id, 
+                                lr_network = lr_network, ligand_target_matrix = ligand_target_matrix, contrasts_oi = contrasts_oi, contrast_tbl = contrast_tbl, batches = batches, covariates = covariates,
+                                prioritizing_weights = prioritizing_weights, min_cells = min_cells, logFC_threshold = logFC_threshold, p_val_threshold = p_val_threshold,  
+                                fraction_cutoff = fraction_cutoff, p_val_adj = p_val_adj, empirical_pval = empirical_pval, top_n_target = top_n_target, n.cores = n.cores, sender_receiver_separate = FALSE, verbose = TRUE)
+
+```
+Save output
+```{r}
+#SP_TP4_vs_TP2 <- multinichenet_output
+SP_TPN1_vs_TP2 <- multinichenet_output
+```
+
+NOW TP_N1 AND TP_TP4
+
+```{r}
+min_cells = 5 #Set minimum number of cells per cell type for any cell cluster to be considered for analysis
+contrasts_oi = c("'TP_N1-TP_T4','TP_T4-TP_N1'")
+contrast_tbl = tibble(
+  contrast = c("TP_N1-TP_T4","TP_T4-TP_N1"), 
+  group = c("TP_N1","TP_T4"))
+
+```
+
+We subset the data to keep only cells from our timepoints that we want to compare first
+```{r}
+sce_chabaudi_subset = sce_chabaudi[, SummarizedExperiment::colData(sce_chabaudi)[,group_id] %in% contrast_tbl$group]
+```
+
+We then set cut offs for different parameters important for DGE analysis and what P-values to consider for further analysis
+```{r}
+logFC_threshold = 0.5 # Instead of 0.5
+p_val_threshold = 0.05
+fraction_cutoff = 0.05
+# p_val_adj = TRUE 
+p_val_adj = FALSE 
+empirical_pval = FALSE
+```
+
+For the NicheNet ligand-target inference, we also need to select which top n of the predicted target genes will be considered (here: top 250 targets per ligand).
+```{r}
+top_n_target = 250
+# Then set multicore analysis to process faster
+cores_system = 8
+n.cores = min(cores_system, union(senders_oi, receivers_oi) %>% length()) # use one core per receiver cell type
+```
+
+Define the weights of the prioritization of both expression, differential expression and NicheNet activity information
+```{r}
+prioritizing_weights_DE = c("de_ligand" = 1,
+                         "de_receptor" = 1)
+prioritizing_weights_activity = c("activity_scaled" = 2)
+
+prioritizing_weights_expression_specificity = c("exprs_ligand" = 2,
+                         "exprs_receptor" = 2)
+
+prioritizing_weights_expression_sufficiency = c("frac_exprs_ligand_receptor" = 1)
+
+prioritizing_weights_relative_abundance = c( "abund_sender" = 0,
+                         "abund_receiver" = 0)
+
+prioritizing_weights = c(prioritizing_weights_DE, 
+                         prioritizing_weights_activity, 
+                         prioritizing_weights_expression_specificity,
+                         prioritizing_weights_expression_sufficiency, 
+                         prioritizing_weights_relative_abundance)
+```
+
+
+Perform MultiNicheNet’s cell-cell communication analysis
+```{r}
+multinichenet_output = multi_nichenet_analysis(sce = sce_chabaudi_subset, celltype_id = celltype_id, sample_id = sample_id, group_id = group_id, 
+                                lr_network = lr_network, ligand_target_matrix = ligand_target_matrix, contrasts_oi = contrasts_oi, contrast_tbl = contrast_tbl, batches = batches, covariates = covariates,
+                                prioritizing_weights = prioritizing_weights, min_cells = min_cells, logFC_threshold = logFC_threshold, p_val_threshold = p_val_threshold,  
+                                fraction_cutoff = fraction_cutoff, p_val_adj = p_val_adj, empirical_pval = empirical_pval, top_n_target = top_n_target, n.cores = n.cores, sender_receiver_separate = FALSE, verbose = TRUE)
+
+```
+Save output
+```{r}
+SP_TPN1_vs_TP4 <- multinichenet_output
+SP_TP2_vs_TP4 <- multinichenet_output
+```
+
+
+Barplots for Nichenet
+```{r}
+bm_t4_genes <- get_top_n_lr_pairs(BM_TPN1_vs_TP4$prioritization_tables, 50, rank_per_group = FALSE)
+c(bm_t4_genes$ligand, bm_t4_genes$receptor)
+
+bm_t2_genes <- get_top_n_lr_pairs(BM_TPN1_vs_TP2$prioritization_tables, 50, rank_per_group = FALSE)
+c(bm_t2_genes$ligand, bm_t2_genes$receptor)
+
+sp_t2_genes <- get_top_n_lr_pairs(SP_TPN1_vs_TP2$prioritization_tables, 50, rank_per_group = FALSE)
+c(sp_t2_genes$ligand, bm_t2_genes$receptor)
+
+sp_t4_genes <- get_top_n_lr_pairs(SP_TPN1_vs_TP4$prioritization_tables, 50, rank_per_group = FALSE)
+c(sp_t4_genes$ligand, bm_t4_genes$receptor)
+```
+
+
+Creating my color scheme for nichnet
+```{r}
+
+mycols = c("B cells" = "#F28385", "CD4+ T cells" = "#C79ECF", "CD8+ T cells" = "#88D987", "DCs" = "#FED4A6", 
+           "Macrophages" = "#6BAED6", "Monocytes" = "#F49C5D", "NK cells" = "#FFFF99", "Neutrophils" = "#F29FC6",
+           "Pro-Erythroblasts" = "#76C1BB","Erythroblasts"= "#FF9999", "Neutrophil Progenitors" = "#A4D3E8",
+           "Pre-B cells" = "#61B985",  
+            "Pro-B cells" = "#AEBD93",
+             "HSPCs"= "#C89A76")
+
+nitchcols <- c("#F28385", "#C79ECF", "#88D987","#FED4A6", "#6BAED6", "#F49C5D", "#FFFF99", "#F29FC6")
+
+# My cells of interest
+#unique(BM_chabaudi.combined$cell_types)[-c(2,6,10)]
+
+my_cells <- c("B.cells", "CD4..T.cells", "CD8..T.cells", "DCs", 
+              "Macrophages", "Monocytes", "NK.cells", "Neutrophils" )
+
+colors_sender = nitchcols %>% magrittr::set_names(my_cells)
+colors_receiver = nitchcols %>% magrittr::set_names(my_cells)
+            
+```
+
+
+Plot the output plots
+```{r}
+for (res_dta in c("BM_TPN1_vs_TP2_merged", "BM_TPN1_vs_TP4_merged", "SP_TPN1_vs_TP2", 
+                  "SP_TPN1_vs_TP4", "SP_TP2_vs_TP4")) {
+  multinichenet_output <- get(res_dta)
+  prioritized_tbl_oi_all = get_top_n_lr_pairs(multinichenet_output$prioritization_tables, 50, rank_per_group = FALSE)
+  prioritized_tbl_oi = multinichenet_output$prioritization_tables$group_prioritization_tbl %>%
+  filter(id %in% prioritized_tbl_oi_all$id) %>%
+  distinct(id, sender, receiver, ligand, receptor, group) %>% left_join(prioritized_tbl_oi_all)
+  prioritized_tbl_oi$prioritization_score[is.na(prioritized_tbl_oi$prioritization_score)] = 0
+  
+  senders_receivers = union(prioritized_tbl_oi$sender %>% unique(), prioritized_tbl_oi$receiver %>% unique()) %>% sort()
+  
+  #colors_sender = nitchcols %>% magrittr::set_names(senders_receivers) #Never to be used. my colors set instead
+  #colors_receiver = nitchcols %>% magrittr::set_names(senders_receivers)
+  
+  par(cex=1.3,  # Adjusts text size globally
+    cex.axis=1.3,  # Adjusts axis text size
+    cex.lab=1.3 
+    #font=2,
+    #col="black"
+    )
+  
+  options(repr.plot.width=30, repr.plot.height=20)
+  circos_list = make_circos_group_comparison(prioritized_tbl_oi, colors_sender, colors_receiver)
+  
+  head(multinichenet_output$prioritization_tables)
+  
+  par(cex=1,  # Adjusts text size globally
+    cex.axis=1,  # Adjusts axis text size
+    cex.lab=1 
+    #font=1,
+    #col="black"
+)
+}
+```
+
+save the nichenet outputs
+```{r}
+nichenet_obj <- list(BM_TPN1_vs_TP2_merged, BM_TPN1_vs_TP4_merged, SP_TPN1_vs_TP2, 
+                     SP_TPN1_vs_TP4, SP_TP2_vs_TP4)
+names(nichenet_obj) <- c("BM_TPN1_vs_TP2_merged", "BM_TPN1_vs_TP4_merged", "SP_TPN1_vs_TP2", 
+                         "SP_TPN1_vs_TP4", "SP_TP2_vs_TP4")
+
+saveRDS(nichenet_obj,"/Users/joycekabagenyi/Documents/PhD_Project/Analysis/Nichnet/nichenet_objs_2024_v2.rds")
+```
+
+
+
+Visualization of the results of the cell-cell communication analysis
+
+1. Circos plot of top-prioritized links
+```{r}
+# Looking at the top 50 predictions across all contrasts, senders, and receivers of interest
+prioritized_tbl_oi_all = get_top_n_lr_pairs(multinichenet_output$prioritization_tables, 50, rank_per_group = FALSE)
+```
+
+
+```{r}
+prioritized_tbl_oi = multinichenet_output$prioritization_tables$group_prioritization_tbl %>%
+  filter(id %in% prioritized_tbl_oi_all$id) %>%
+  distinct(id, sender, receiver, ligand, receptor, group) %>% left_join(prioritized_tbl_oi_all)
+prioritized_tbl_oi$prioritization_score[is.na(prioritized_tbl_oi$prioritization_score)] = 0
+
+senders_receivers = union(prioritized_tbl_oi$sender %>% unique(), prioritized_tbl_oi$receiver %>% unique()) %>% sort()
+
+colors_sender = RColorBrewer::brewer.pal(n = length(senders_receivers), name = 'Spectral') %>% magrittr::set_names(senders_receivers)
+colors_receiver = RColorBrewer::brewer.pal(n = length(senders_receivers), name = 'Spectral') %>% magrittr::set_names(senders_receivers)
+
+options(repr.plot.width=30, repr.plot.height=20)
+circos_list = make_circos_group_comparison(prioritized_tbl_oi, colors_sender, colors_receiver)
+
+head(multinichenet_output$prioritization_tables)
+```
+
+
+```{r}
+senders_receivers = union(prioritized_tbl_oi$sender %>% unique(), prioritized_tbl_oi$receiver %>% unique()) %>% sort()
+
+colors_sender = RColorBrewer::brewer.pal(n = length(senders_receivers), name = 'Spectral') %>% magrittr::set_names(senders_receivers)
+colors_receiver = RColorBrewer::brewer.pal(n = length(senders_receivers), name = 'Spectral') %>% magrittr::set_names(senders_receivers)
+
+options(repr.plot.width=30, repr.plot.height=20, cex = 1)
+circos_list = make_circos_group_comparison(prioritized_tbl_oi, colors_sender, colors_receiver)
+
+head(multinichenet_output$prioritization_tables)
+```
+
+****** Comparing bone marrow and spleen TP2 ******
+
+Convert my seurat object into a singleR object # Starting with the bone marrow then spleen
+```{r}
+BM_chabaudi.combined <- subset(chabaudi_combined, TimePoint == "TP_T2") # Import RDS
+BM_chabaudi.combined@meta.data[["consensuscall"]] <- ifelse(is.na(BM_chabaudi.combined@meta.data[["consensuscall"]]) == TRUE, BM_chabaudi.combined@meta.data[["Condition"]],BM_chabaudi.combined@meta.data[["consensuscall"]])
+unique(BM_chabaudi.combined@meta.data[["consensuscall"]])
+
+BM_chabaudi.combined$sampleID <- (ifelse(is.na(BM_chabaudi.combined@meta.data[["TimePoint"]]) == FALSE,
+                                    paste(BM_chabaudi.combined@meta.data[["consensuscall"]],BM_chabaudi.combined@meta.data[["TimePoint"]], sep = "_"),BM_chabaudi.combined@meta.data[["Condition"]]))
+
+sce_chabaudi = Seurat::as.SingleCellExperiment(BM_chabaudi.combined, assay = "RNA")
+sce_chabaudi = alias_to_symbol_SCE(sce_chabaudi, "mouse") %>% makenames_SCE()
+```
+
+```{r}
+sample_id = "sampleID"
+group_id = "Tissue"
+celltype_id = "cell_types"
+covariates = NA
+batches = NA
+```
+
+
+
+```{r}
+SummarizedExperiment::colData(sce_chabaudi)$sampleID = SummarizedExperiment::colData(sce_chabaudi)$sampleID %>% make.names()
+SummarizedExperiment::colData(sce_chabaudi)$TimePoint = SummarizedExperiment::colData(sce_chabaudi)$TimePoint %>% make.names()
+SummarizedExperiment::colData(sce_chabaudi)$cell_types = SummarizedExperiment::colData(sce_chabaudi)$cell_types %>% make.names()
+
+unique(colData(sce_chabaudi)$sampleID)
+unique(colData(sce_chabaudi)$Tissue)
+unique(colData(sce_chabaudi)$cell_types)
+
+```
+```{r}
+senders_oi = SummarizedExperiment::colData(sce_chabaudi)[,celltype_id] %>% unique()
+senders_oi = senders_oi[-c(7,8,10)] # Ignore erythroblasts and HSPCs
+receivers_oi = SummarizedExperiment::colData(sce_chabaudi)[,celltype_id] %>% unique()
+receivers_oi = receivers_oi[-c(7,8,10)] # Ignore erythroblasts and HSPCs
+```
+
+Subset or obeject if we want to use just a set of our cells
+```{r}
+sce_chabaudi = sce_chabaudi[, SummarizedExperiment::colData(sce_chabaudi)[,celltype_id] %in% c(senders_oi, receivers_oi)]
+
+# cell type abundance and expression information from receiver and sender cell types
+abundance_expression_info = get_abundance_expression_info(sce = sce_chabaudi, sample_id = "sampleID", group_id = "Tissue", celltype_id = "cell_types", min_cells = min_cells, senders_oi = senders_oi, receivers_oi = receivers_oi, lr_network = lr_network, batches = batches)
+
+abundance_expression_info$abund_plot_sample
+abundance_expression_info$abund_plot_group
+```
+
+```{r}
+min_cells = 5 #Set minimum number of cells per cell type for any cell cluster to be considered for analysis
+contrasts_oi = c("'spleen-bone_marrow','bone_marrow-spleen'")
+contrast_tbl = tibble(
+  contrast = c("spleen-bone_marrow","bone_marrow-spleen"), 
+  group = c("spleen","bone_marrow"))
+
+#"spleen"      "bone_marrow"
+```
+
+We subset the data to keep only cells from our timepoints that we want to compare first
+```{r}
+sce_chabaudi_subset = sce_chabaudi[, SummarizedExperiment::colData(sce_chabaudi)[,group_id] %in% contrast_tbl$group]
+```
+
+We then set cut offs for different parameters important for DGE analysis and what P-values to consider for further analysis
+```{r}
+logFC_threshold = 0.5 # Instead of 0.5
+p_val_threshold = 0.05
+fraction_cutoff = 0.05
+# p_val_adj = TRUE 
+p_val_adj = FALSE 
+empirical_pval = FALSE
+```
+
+For the NicheNet ligand-target inference, we also need to select which top n of the predicted target genes will be considered (here: top 250 targets per ligand).
+```{r}
+top_n_target = 250
+# Then set multicore analysis to process faster
+cores_system = 8
+n.cores = min(cores_system, union(senders_oi, receivers_oi) %>% length()) # use one core per receiver cell type
+```
+
+Define the weights of the prioritization of both expression, differential expression and NicheNet activity information
+```{r}
+prioritizing_weights_DE = c("de_ligand" = 1,
+                         "de_receptor" = 1)
+prioritizing_weights_activity = c("activity_scaled" = 2)
+
+prioritizing_weights_expression_specificity = c("exprs_ligand" = 2,
+                         "exprs_receptor" = 2)
+
+prioritizing_weights_expression_sufficiency = c("frac_exprs_ligand_receptor" = 1)
+
+prioritizing_weights_relative_abundance = c( "abund_sender" = 0,
+                         "abund_receiver" = 0)
+
+prioritizing_weights = c(prioritizing_weights_DE, 
+                         prioritizing_weights_activity, 
+                         prioritizing_weights_expression_specificity,
+                         prioritizing_weights_expression_sufficiency, 
+                         prioritizing_weights_relative_abundance)
+```
+
+
+Perform MultiNicheNet’s cell-cell communication analysis
+```{r}
+multinichenet_output = multi_nichenet_analysis(sce = sce_chabaudi_subset, celltype_id = celltype_id, sample_id = sample_id, group_id = group_id, 
+                                lr_network = lr_network, ligand_target_matrix = ligand_target_matrix, contrasts_oi = contrasts_oi, contrast_tbl = contrast_tbl, batches = batches, covariates = covariates,
+                                prioritizing_weights = prioritizing_weights, min_cells = min_cells, logFC_threshold = logFC_threshold, p_val_threshold = p_val_threshold,  
+                                fraction_cutoff = fraction_cutoff, p_val_adj = p_val_adj, empirical_pval = empirical_pval, top_n_target = top_n_target, n.cores = n.cores, sender_receiver_separate = FALSE, verbose = TRUE)
+
+```
+
+```{r}
+BM_vs_SP_T2 = prioritized_tbl_oi_all
+```
+
+```{r}
+prioritized_tbl_oi_all = get_top_n_lr_pairs(multinichenet_output$prioritization_tables, 50, rank_per_group = FALSE)
+
+prioritized_tbl_oi = multinichenet_output$prioritization_tables$group_prioritization_tbl %>%
+  filter(id %in% prioritized_tbl_oi_all$id) %>%
+  distinct(id, sender, receiver, ligand, receptor, group) %>% left_join(prioritized_tbl_oi_all)
+prioritized_tbl_oi$prioritization_score[is.na(prioritized_tbl_oi$prioritization_score)] = 0
+
+senders_receivers = union(prioritized_tbl_oi$sender %>% unique(), prioritized_tbl_oi$receiver %>% unique()) %>% sort()
+
+colors_sender = RColorBrewer::brewer.pal(n = length(senders_receivers), name = 'Spectral') %>% magrittr::set_names(senders_receivers)
+colors_receiver = RColorBrewer::brewer.pal(n = length(senders_receivers), name = 'Spectral') %>% magrittr::set_names(senders_receivers)
+
+options(repr.plot.width=30, repr.plot.height=20)
+circos_list = make_circos_group_comparison(prioritized_tbl_oi, colors_sender, colors_receiver)
+
+head(multinichenet_output$prioritization_tables)
+```
+
+

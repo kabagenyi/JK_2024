@@ -1,0 +1,763 @@
+---
+title: "Chabaudi data analysis"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+Install packages needed
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(CellChat)
+library(patchwork)
+library(sjmisc)
+library(cellhashR)
+library(tidyr)
+library(PloGO2)
+library(clustree)
+library(sctransform)
+#library(scCustomize)
+library(scMayoMap)
+library(ggplot2)
+library(tibble) 
+library(reshape2)
+options(stringsAsFactors = FALSE)
+
+```
+
+
+Loading the data rds files
+```{r}
+dir = "~/Documents/PhD_Project/Analysis/"
+
+BM_chabaudi <- readRDS(paste0(dir, "BM_chabaudi_query_labelled.rds")) # Chabaudi bone marrows
+BM_chabaudi$cell_types <- Idents(BM_chabaudi)
+
+SP_chabaudi <- readRDS(paste0(dir, "SP_chabaudi_query_labelled.rds")) # Chabaudi spleens
+SP_chabaudi$cell_types <- Idents(SP_chabaudi)
+
+```
+
+
+```{r}
+DimPlot(SP_chabaudi, label = T) + NoLegend()
+DimPlot(BM_chabaudi, label = T) + NoLegend()
+```
+
+Use the combined object instead
+```{r}
+chabaudi_combined <- readRDS(paste0(dir, "all_chabaudi_combined_unlabelled.rds"))
+DefaultAssay(chabaudi_combined) <- "integrated"
+DimPlot(chabaudi_combined, label = T) + NoLegend()
+DimPlot(chabaudi_combined, label = T, split.by = "Tissue") + NoLegend()
+```
+
+Rename Idents
+```{r}
+chabaudi_combined <- RenameIdents(chabaudi_combined, 
+          `0` = 'Neutrophils', `1` = "Neutrophils", `2` = "Neutrophils",`3` = "B cells", `4` = "Pro-Erythroblasts", 
+          `5` = "Neutrophils", `6` = "Monocytes", `7` = "Erythroblasts", `8` = "Neutrophil Progenitors",
+          `9` = "Erythroblasts", `10` = "Macrophages", `11` = "Pre-B cells", `12` = "CD4+ T cells",
+          `13` = "NK cells", `14` = "HSPCs", `15` = "Pro-B cells", `16` = "CD8+ T cells",
+          `17` = "DCs", `18` = "Macrophages", `19` = "Neutrophils")
+```
+
+
+Visualise and save rds
+```{r}
+mycols = c("B cells" = "#F28385", "CD4+ T cells" = "#C79ECF", "CD8+ T cells" = "#88D987", "DCs" = "#FED4A6", 
+           "Macrophages" = "#6BAED6", "Monocytes" = "#F49C5D", "NK cells" = "#FFFF99", "Neutrophils" = "#F29FC6",
+           "Pro-Erythroblasts" = "#76C1BB","Erythroblasts"= "#FF9999", "Neutrophil Progenitors" = "#A4D3E8",
+           "Pre-B cells" = "#61B985",  
+            "Pro-B cells" = "#AEBD93",
+             "HSPCs"= "#C89A76")
+           
+
+DimPlot(chabaudi_combined, label = T, pt.size = 0.6, label.size = 5, repel=TRUE, cols = mycols)+ NoLegend() +
+  theme(#text = element_text(face = "bold"),
+        axis.text.x=element_text(size=15),
+        axis.title.x = element_text(size=15),
+        axis.text.y=element_text(size=15),
+        axis.title.y = element_text(size=15),
+        )
+
+DimPlot(chabaudi_combined, label = T, pt.size = 0.6, label.size = 5, repel=TRUE, cols = mycols,  split.by = "Tissue")+ NoLegend() +
+  theme(#text = element_text(face = "bold"),
+        axis.text.x=element_text(size=15),
+        axis.title.x = element_text(size=15),
+        axis.text.y=element_text(size=15),
+        axis.title.y = element_text(size=15),
+        )
+```
+Editing the cell labels in the spleen
+```{r}
+chabaudi_combined$cell_type <- Idents(chabaudi_combined)
+chabaudi_combined@meta.data <- chabaudi_combined@meta.data %>% 
+     mutate(cell_types = case_when(
+         Tissue == 'spleen' & cell_type == "Monocytes"  ~ 'Macrophages',
+         Tissue == 'spleen' & cell_type == "HSPCs" ~ 'Macrophages',
+         Tissue == 'spleen' & cell_type == "Neutrophil Progenitors"  ~ 'Neutrophils',
+         Tissue == 'spleen' & cell_type == "Pre-B cells"  ~ 'B cells',
+         Tissue == 'spleen' & cell_type == "Pro-B cells"  ~ 'B cells',
+         TRUE ~ chabaudi_combined@meta.data$cell_type
+     ))
+
+Idents(chabaudi_combined) <- "cell_types"
+```
+
+
+Visualise and save rds
+```{r}
+DimPlot(chabaudi_combined, label = T, pt.size = 0.6, label.size = 7, repel=TRUE, cols = mycols)+ NoLegend() +
+  theme(#text = element_text(face = "bold"),
+        axis.text.x=element_text(size=15),
+        axis.title.x = element_text(size=15),
+        axis.text.y=element_text(size=15),
+        axis.title.y = element_text(size=15),
+        )
+
+DimPlot(chabaudi_combined, label = T, pt.size = 0.6, label.size = 7, repel=TRUE, cols = mycols,  split.by = "Tissue")+ NoLegend() +
+  theme(#text = element_text(face = "bold"),
+        axis.text.x=element_text(size=15),
+        axis.title.x = element_text(size=15),
+        axis.text.y=element_text(size=15),
+        axis.title.y = element_text(size=15),
+        )
+```
+
+```{r}
+dir <- "/Users/joycekabagenyi/Documents/PhD_Project/Analysis/"
+saveRDS(chabaudi_combined, file = paste0(dir, "all_chabaudi_combined_labelled.rds"))
+```
+
+Plot edits
+```{r}
+# My custom colors
+mycols_1 = c("B cells" = "#F28385", "CD4+ T cells" = "#C79ECF", "CD8+ T cells" = "#88D987", "DCs" = "#FED4A6", 
+           "Macrophages" = "#6BAED6", "Monocytes" = "#F49C5D", "NK cells" = "#FEE9CF", "Neutrophils" = "#F29FC6",
+           "Pro-Erythroblasts" = "#76C1BB","Erythroblasts"= "#EB869D", "Neutrophil Progenitors" = "#A4D3E8",
+           "Pre-B cells" = "#61B985",  
+            "Pro-B cells" = "#3C8F50",
+             "HSPCs"= "#C89A76")
+
+mycols = c("B cells" = "#F28385", "CD4+ T cells" = "#C79ECF", "CD8+ T cells" = "#88D987", "DCs" = "#FED4A6", 
+           "Macrophages" = "#6BAED6", "Monocytes" = "#F49C5D", "NK cells" = "#FFFF99", "Neutrophils" = "#F29FC6",
+           "Pro-Erythroblasts" = "#76C1BB","Erythroblasts"= "#FF9999", "Neutrophil Progenitors" = "#A4D3E8",
+           "Pre-B cells" = "#61B985",  
+            "Pro-B cells" = "#AEBD93",
+             "HSPCs"= "#C89A76")
+
+#my special theme
+jk_theme <- theme(plot.title = element_text(size = 40, face = "bold"),
+          axis.title.x = element_text(size = 16),
+          axis.title.y = element_text(size = 16),
+          legend.title = element_text(size = 14),
+          legend.text = element_text(size = 12),
+          axis.text.x = element_text(size = 12,angle = -45, hjust = 0),
+          axis.text.y = element_text(size = 12)) 
+```
+
+Ignoring the erythroblasts and neutrophil in bone marrow
+```{r}
+## Ignoring the erythroblasts and neutrophil
+dta <- subset(chabaudi_combined, subset = cell_type %in% 
+                       unique(chabaudi_combined$cell_type)[-c(1,6,9,10)]) # Ignoring Erythroblasts and HSPCs
+
+freq.table.group <- as.data.frame(prop.table(x = table(Idents(subset(dta, subset = Tissue == "bone_marrow")),
+                                                       subset(dta, subset = Tissue == "bone_marrow")$TimePoint), 
+                                             margin = 2))
+ggplot(data = freq.table.group, 
+       aes(x=Var2, y = Freq, fill=Var1)) + geom_bar(stat="identity",color="black") +
+  labs(x="Infection Time Point", y="Proportion of cells",fill="Cell Types") +
+      theme_classic() +
+    theme(plot.title = element_text(size = 16, face = "bold"),
+          axis.title.x = element_text(size = 16),
+          axis.title.y = element_text(size = 16),
+          legend.title = element_text(size = 14),
+          legend.text = element_text(size = 12),
+          axis.text.x = element_text(size = 12, angle = 0, hjust = 0.5, margin = margin(t = 10, b = 10, unit = "pt")),
+          axis.text.y = element_text(size = 12,)) +
+    scale_fill_manual(values = mycols)+
+  scale_x_discrete(labels = c("TP_N1" = "0 dpi", "TP_T2" = "8 dpi", "TP_T3" = "14 dpi", 
+                                      "TP_T4" = " 23 dpi","TP_T5" = "56 dpi"))
+```
+
+
+cell types over time
+```{r}
+freq.table.group <- as.data.frame(prop.table(x = table(subset(chabaudi_combined, subset = Tissue == "bone_marrow")$cell_types,
+                                                       subset(chabaudi_combined, subset = Tissue == "bone_marrow")$TimePoint), margin = 2))
+
+ggplot(data=freq.table.group, aes(x=Var2, y = Freq, fill=Var1)) + geom_bar(stat="identity",color="black") +
+labs(x="Infection Time Point", y="Proportion of cells",fill="Cell Type") + 
+  scale_x_discrete(limits = (levels(freq.table.group$Var2)))+
+      theme_classic() +
+    theme(plot.title = element_text(size = 16, face = "bold"),
+          axis.title.x = element_text(size = 16),
+          axis.title.y = element_text(size = 16),
+          legend.title = element_text(size = 14),
+          legend.text = element_text(size = 12),
+          axis.text.x = element_text(size = 12, angle = 0, hjust = 0.5, margin = margin(t = 10, b = 10, unit = "pt")),
+          axis.text.y = element_text(size = 12)) +
+          scale_fill_manual(values = mycols)+
+          scale_x_discrete(labels = c("TP_N1" = "0 dpi", "TP_T2" = "8 dpi", "TP_T3" = "14 dpi", 
+                                      "TP_T4" = " 23 dpi","TP_T5" = "56 dpi"))
+
+freq.table.group <- as.data.frame(prop.table(x = table(Idents(subset(chabaudi_combined, subset = Tissue == "spleen")),
+                                                       subset(chabaudi_combined, subset = Tissue == "spleen")$TimePoint), margin = 2))
+
+ggplot(data=freq.table.group, aes(x=Var2, y = Freq, fill=Var1)) + geom_bar(stat="identity",color="black") +
+labs(x="Infection Time Point", y="Proportion of cells",fill="Cell Type") + 
+  scale_x_discrete(limits = (levels(freq.table.group$Var2)))+
+      theme_classic() +
+    theme(plot.title = element_text(size = 16, face = "bold"),
+          axis.title.x = element_text(size = 16),
+          axis.title.y = element_text(size = 16),
+          legend.title = element_text(size = 14),
+          legend.text = element_text(size = 12),
+          axis.text.x = element_text(size = 12, angle = 0, hjust = 0.5, margin = margin(t = 10, b = 10, unit = "pt")),
+          axis.text.y = element_text(size = 12)) +
+          scale_fill_manual(values = mycols)+
+          scale_x_discrete(labels = c("TP_N1" = "0 dpi", "TP_T2" = "8 dpi", "TP_T3" = "14 dpi", 
+                                      "TP_T4" = " 23 dpi","TP_T5" = "56 dpi"))
+
+## Ignoring the erythroblasts only
+dta <- subset(chabaudi_combined, subset = cell_type %in% 
+                       unique(chabaudi_combined$cell_type)[-c(1,6,9)]) # Ignoring Erythroblasts and HSPCs
+
+freq.table.group <- as.data.frame(prop.table(x = table(Idents(subset(dta, subset = Tissue == "bone_marrow")),
+                                                       subset(dta, subset = Tissue == "bone_marrow")$TimePoint), 
+                                             margin = 2))
+ggplot(data = freq.table.group, 
+       aes(x=Var2, y = Freq, fill=Var1)) + geom_bar(stat="identity",color="black") +
+  labs(x="Infection Time Point", y="Proportion of cells",fill="Cell Types") +
+      theme_classic() +
+    theme(plot.title = element_text(size = 16, face = "bold"),
+          axis.title.x = element_text(size = 16),
+          axis.title.y = element_text(size = 16),
+          legend.title = element_text(size = 14),
+          legend.text = element_text(size = 12),
+          axis.text.x = element_text(size = 12, angle = 0, hjust = 0.5, margin = margin(t = 10, b = 10, unit = "pt")),
+          axis.text.y = element_text(size = 12)) +
+          scale_fill_manual(values = mycols) +
+          scale_x_discrete(labels = c("TP_N1" = "0 dpi", "TP_T2" = "8 dpi", "TP_T3" = "14 dpi", 
+                                      "TP_T4" = " 23 dpi","TP_T5" = "56 dpi"))
+
+
+freq.table.group <- as.data.frame(prop.table(x = table(Idents(subset(dta, subset = Tissue == "spleen")),
+                                                       (subset(dta, subset = Tissue == "spleen"))$TimePoint), margin = 2))
+library(ggplot2)
+
+ggplot(data = freq.table.group, aes(x = Var2, y = Freq, fill = Var1)) +
+    geom_bar(stat = "identity", color = "black") +
+    labs(x = "Infection Time Point", y = "Proportion of cells", fill = "Cell Types") +
+    theme_classic() +
+    theme(plot.title = element_text(size = 16, face = "bold"),
+          axis.title.x = element_text(size = 16),
+          axis.title.y = element_text(size = 16),
+          legend.title = element_text(size = 14),
+          legend.text = element_text(size = 12),
+          axis.text.x = element_text(size = 12, angle = 0, hjust = 0.5, margin = margin(t = 10, b = 10, unit = "pt")),
+          axis.text.y = element_text(size = 12)) +
+          scale_fill_manual(values = mycols)+
+          scale_x_discrete(labels = c("TP_N1" = "0 dpi", "TP_T2" = "8 dpi", "TP_T3" = "14 dpi", 
+                                      "TP_T4" = " 23 dpi","TP_T5" = "56 dpi"))
+```
+Cell counts per tissue
+```{r}
+
+sp_cells <- as.data.frame(table(Idents(subset(chabaudi_combined, subset = Tissue == "spleen")),
+                                                       (subset(chabaudi_combined, subset = Tissue == "spleen"))$TimePoint))
+
+bm_cells <- as.data.frame(table(Idents(subset(chabaudi_combined, subset = Tissue == "bone_marrow")),
+                                                       (subset(chabaudi_combined, subset = Tissue == "bone_marrow"))$TimePoint))
+# Rename variables
+ names(bm_cells) <- c("cell_type", "time_point", "bm_counts")
+ names(sp_cells) <- c("cell_type", "time_point", "sp_counts")
+ 
+ # Rotate the table to a wider format
+ bm_cells <- pivot_wider(bm_cells, names_from = time_point, values_from = bm_counts)
+ sp_cells <- pivot_wider(sp_cells, names_from = time_point, values_from = sp_counts)
+ 
+ # Calculate sum for each column
+summary_row_bm <- summarise_all(bm_cells[,-1], sum, na.rm = TRUE)
+
+summary_row_sp <- summarise_all(sp_cells[,-1], sum, na.rm = TRUE)
+
+# Combine the bm and sp conts, then sum to get grand total cells time point the summary row to the original dataframe
+all_cells <- rbind(summary_row_bm, summary_row_sp)
+summary_row <- summarise_all(all_cells, sum, na.rm = TRUE) # Calculate the sums
+all_cells <- bind_rows(all_cells, summary_row) # Add the summary row to the original dataframe
+
+#df <- filter(!apply(df, 1, function(x) any(grepl("H2.", x))))})
+#df <- filter(!apply(df, 1, function(x) any(grepl("H2.", x))))})
+
+ 
+# Adding a new variable and positioning it at the start
+all_cells <- all_cells %>%
+  dplyr::mutate(Tissue = c("Bone marrow", "Spleen", "Total")) %>%  # Adding new column
+  dplyr::select(Tissue, everything())           # Reordering to make it first
+
+# Save csv
+write.csv(all_cells, "/Users/joycekabagenyi/Documents/PhD_Project/Conferences and workshops/BIOMAL_2024/plots/cell_count.csv")
+
+```
+
+
+Marker genes plotting with dot plots
+```{r}
+DefaultAssay(chabaudi_combined) <- "RNA"
+
+custom_order <- c("CD8+ T cells", "CD4+ T cells", "NK cells", "DCs", "Monocytes", "Macrophages", "HSPCs", 
+                  "Pro-B cells", "Pre-B cells", "B cells", "Neutrophil Progenitors", "Neutrophils", 
+                  "Pro-Erythroblasts", "Erythroblasts"
+                  )
+
+# With unlabelled object
+VlnPlot(chabaudi_combined, features = c("Cd3e", "Cd8a", "Cd4","Ccl5", "Siglech", "Ctsg", "S100a4",
+                                        "Gata2", "Cd79a", "Vpreb1", "Vpreb3", "Bank1", "Ngp", "S100a9", "Ly6g",     
+                                         "Hemgn", "Bpgm"))
+
+FeaturePlot(chabaudi_combined, features = c("Cd3e", "Cd8a", "Cd4","Ccl5", "Siglech", "Ctsg", "S100a4",
+                                        "Gata2", "Cd79a", "Vpreb1", "Vpreb3", "Bank1", "Ngp", "S100a9", "Ly6g",     
+                                         "Hemgn", "Bpgm"), min.cutoff = "q9")
+
+DotPlot(chabaudi_combined, features = c("Cd3e", "Cd8a", "Cd4","Ccl5", "Siglech", "Ctsg", "S100a4",
+                                        "Gata2", "Cd79a", "Vpreb1", "Vpreb3", "Bank1", "Ngp", "S100a9", "Ly6g",     
+                                         "Hemgn", "Bpgm"),
+        cols = c("#F8F6ED", "#A11213")) + 
+  scale_y_discrete(limits = rev(custom_order), labels = rev(custom_order)) +
+  theme(axis.text.y = element_text(#angle = 45, 
+                                   hjust = 1, size = 14)) +
+  ylab("Cell types") +
+  theme(axis.title.y = element_text(size = 14)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 14))+
+  theme(axis.title.x = element_text(size = 16)) 
+
+```
+
+
+
+
+
+Cell Chat
+
+Loading the necessary libraries
+```{r}
+library(CellChat)
+library(patchwork)
+options(stringsAsFactors = FALSE)
+library(dplyr)
+library(Seurat)
+
+```
+
+Cell chat object
+```{r}
+cells.present = as.character(unique(chabaudi_combined$cell_types)[-c(1,7,13)]) # select cells excluding erythroblasts and HSPCs
+BM_anchors.combined <- subset(chabaudi_combined, subset = cell_types %in% cells.present)            
+data.input <- GetAssayData(BM_anchors.combined, assay = "RNA", slot = "data") # normalized data matrix
+
+# Met data
+labels <- Idents(BM_anchors.combined)
+meta <- data.frame(group = labels, row.names = names(labels)) # create a dataframe of the cell labels
+names(meta)[names(meta) == "group"] <- "labels"
+
+#Getting the extra variables for the meta data
+
+extra.meta = BM_anchors.combined@meta.data
+meta = dplyr::bind_cols(meta, extra.meta)
+
+#cellChat <- createCellChat(object = BM_anchors.combined, group.by = "ident", assay = "RNA")
+```
+
+
+Before creating the cell chat object
+```{r}
+# meta_select = subset(meta, labels != "Late Pro-Bcells")
+cell.use1 = rownames(meta)[meta$TimePoint == "TP_N1" & meta$Tissue == "spleen" & meta$cell_types != "DCs"] # cells from spleen naive  
+cell.use2 = rownames(meta)[meta$TimePoint == "TP_T2" & meta$Tissue == "spleen" & meta$cell_types != "DCs"] # cells from spleen TP2
+cell.use3 = rownames(meta)[meta$TimePoint == "TP_T3" & meta$Tissue == "spleen" & meta$cell_types != "DCs"] # cells from spleen TP3 
+cell.use4 = rownames(meta)[meta$TimePoint == "TP_T4" & meta$Tissue == "spleen" & meta$cell_types != "DCs"] # cells from spleen TP4
+cell.use5 = rownames(meta)[meta$TimePoint == "TP_T5" & meta$Tissue == "spleen" & meta$cell_types != "DCs"] # cells from spleen TP2
+                           
+cell.use6 = rownames(meta)[meta$TimePoint == "TP_N1" & meta$Tissue == "bone_marrow" ] # extract the cell names from bone marrow naive  
+cell.use7 = rownames(meta)[meta$TimePoint == "TP_T2" & meta$Tissue == "bone_marrow" ] # extract the cell names from bone marrow TP2
+cell.use8 = rownames(meta)[meta$TimePoint == "TP_T3" & meta$Tissue == "bone_marrow" ] # extract the cell names from bone marrow TP3  
+cell.use9 = rownames(meta)[meta$TimePoint == "TP_T4" & meta$Tissue == "bone_marrow" ] # extract the cell names from bone marrow TP4
+cell.use10 = rownames(meta)[meta$TimePoint == "TP_T5" & meta$Tissue == "bone_marrow" ] # extract the cell names from bone marrow TP5 
+
+
+# Prepare input data for CellChat analysis
+cc.obj <- tibble(organ = c(rep("spleen",5), rep("bone_marrow",5)), 
+                     timepoint = c(rep(unique(meta$TimePoint),2))) #cell_chat_objects
+cc.obj.list <- c()
+  
+for (i in c(1:10)) {
+  cell_file <- paste0("cell.use", i)
+  input_file <- paste0("data.input", i)
+  chat_file <- paste(cc.obj[i,1], cc.obj[i,2], sep = "_")
+  
+  #data.input1 <- GetAssayData(subset(BM_anchors.combined, Tissue == "spleen"), assay = "RNA", slot = "data")
+  
+  # Subset the expression matrix and meta data
+  my.data.input = data.input[, get(cell_file)]
+  my.meta = meta[get(cell_file), ]
+  my.meta$labels = droplevels(my.meta$labels, exclude = setdiff(levels(my.meta$labels),unique(my.meta$labels)))
+  
+  # Create the cell chat object
+  my.cellchat <- createCellChat(object = my.data.input)
+  my.cellchat <- addMeta(my.cellchat, meta = my.meta)
+  my.cellchat <- setIdent(my.cellchat, ident.use = "labels") # set "labels" as default cell identity
+  levels(my.cellchat@idents) # show factor levels of the cell labels
+  groupSize <- as.numeric(table(my.cellchat@idents)) # number of cells in each cell group
+  
+  # Save the cell chat object under the right name
+  assign(chat_file, my.cellchat)
+  
+  cc.obj.list <- append(cc.obj.list, chat_file)
+
+}
+```
+
+```{r}
+# 1. Set the ligand-receptor interaction database
+
+CellChatDB <- CellChatDB.mouse # use CellChatDB.mouse if running on mouse data
+showDatabaseCategory(CellChatDB)
+
+#Deleting the two unfound interactions from the  "subset" function in previous code and then runing the upper chunk again
+
+which(CellChatDB[["interaction"]]$ligand == "H2-BI") # 1887
+CellChatDB[["interaction"]] <- CellChatDB[["interaction"]][-1887,]
+which(CellChatDB[["interaction"]]$ligand == "H2-Ea-ps") #1900
+CellChatDB[["interaction"]] <- CellChatDB[["interaction"]][-1900,]
+
+# use all CellChatDB for cell-cell communication analysis
+CellChatDB.use <- CellChatDB # simply use the default CellChatDB
+
+# set the used database in the object
+cellchat@DB <- CellChatDB.use
+```
+
+
+
+```{r}
+for (i in cc.obj.list) {
+  
+cellchat = get(i)
+
+# 1. Set the ligand-receptor interaction database
+
+CellChatDB <- CellChatDB.mouse # use CellChatDB.mouse if running on mouse data
+showDatabaseCategory(CellChatDB)
+
+#Deleting the two unfound interactions from the  "subset" function in previous code and then runing the upper chunk again
+
+which(CellChatDB[["interaction"]]$ligand == "H2-BI") # 1887
+CellChatDB[["interaction"]] <- CellChatDB[["interaction"]][-1887,]
+which(CellChatDB[["interaction"]]$ligand == "H2-Ea-ps") #1900
+CellChatDB[["interaction"]] <- CellChatDB[["interaction"]][-1900,]
+
+# use all CellChatDB for cell-cell communication analysis
+CellChatDB.use <- CellChatDB # simply use the default CellChatDB
+
+# set the used database in the object
+cellchat@DB <- CellChatDB.use
+
+
+# subset the expression data of signaling genes for saving computation cost
+cellchat <- subsetData(cellchat) # This step is necessary even if using the whole database
+#future::plan("multisession", workers = 4) # do parallel
+
+#Part I: Identify over expressed genes and interactions
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+
+#Part II: Inference of cell-cell communication network
+cellchat <- computeCommunProb(cellchat, population.size = TRUE)
+#cellchat <- computeCommunProb(cellchat)
+cellchat <- filterCommunication(cellchat, min.cells = 10) # Filter out the cell-cell communication if there are only few number of cells in certain cell groups
+
+#Infer the cell-cell communication at a signaling pathway level
+cellchat <- computeCommunProbPathway(cellchat)
+
+#Calculate the aggregated cell-cell communication network
+cellchat <- aggregateNet(cellchat)
+
+cellchat <- netAnalysis_computeCentrality(cellchat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network
+
+cellchat <- computeCommunProbPathway(cellchat)
+
+#cellchat <- updateCellChat(cellchat)
+
+assign(i,cellchat)
+
+}
+
+```
+
+
+
+Additional analysis on individual cell chat objects
+```{r}
+for (i in cc.obj.list){
+  cellchat = get(i)
+  netAnalysis_signalingRole_network(cellchat, width = 8, height = 2.5, font.size = 10) 
+  
+  cellchat.Pb_Infected <- computeNetSimilarity(cellchat.Pb_Infected, type = "functional")
+  cellchat.Pb_Infected <- netEmbedding(cellchat.Pb_Infected, type = "functional")
+  cellchat.Pb_Infected <- netClustering(cellchat.Pb_Infected, type = "functional", do.parallel = F)
+  
+  cellchat.Pc_Infected <- computeNetSimilarity(cellchat.Pc_Infected, type = "functional")
+  cellchat.Pc_Infected <- netEmbedding(cellchat.Pc_Infected, type = "functional")
+  cellchat.Pc_Infected <- netClustering(cellchat.Pc_Infected, type = "functional",do.parallel = F)
+  
+  # Structural analysis
+  cellchat.Pb_Infected <- computeNetSimilarity(cellchat.Pb_Infected, type = "structural")
+  cellchat.Pb_Infected <- netEmbedding(cellchat.Pb_Infected, type = "structural")
+  cellchat.Pb_Infected <- netClustering(cellchat.Pb_Infected, type = "structural",do.parallel = F)
+  
+  cellchat.Pc_Infected <- computeNetSimilarity(cellchat.Pc_Infected, type = "structural")
+  cellchat.Pc_Infected <- netEmbedding(cellchat.Pc_Infected, type = "structural")
+  cellchat.Pc_Infected <- netClustering(cellchat.Pc_Infected, type = "structural", do.parallel = F)
+  
+  nPatterns = 4 # for control
+  cellchat.Pb_Infected <- identifyCommunicationPatterns(cellchat.Pb_Infected, pattern = "outgoing", k = nPatterns)
+  
+  nPatterns =  3# for control
+  cellchat.Pb_Infected <- identifyCommunicationPatterns(cellchat.Pb_Infected, pattern = "incoming", k = nPatterns)
+
+
+}
+ 
+```
+
+Merge cell chat objects
+
+```{r}
+#comparison_files <- c("TP_T2", "TP_T3", "TP_T4", "TP_T5")
+  #group.new = levels(spleen_TP_N1@idents)
+  #spleen_TP_T2 <- liftCellChat(spleen_TP_T2, group.new)
+  #spleen_TP_T2 <- updateCellChat(spleen_TP_T2)
+
+#Spleens
+
+  object.list <- list(TP_N1 = spleen_TP_N1, TP_T2 = spleen_TP_T2)
+  S2 <- mergeCellChat(object.list, add.names = names(object.list), cell.prefix = TRUE)
+  
+  object.list <- list(TP_N1 = spleen_TP_N1, TP_T3 = spleen_TP_T3)
+  S3 <- mergeCellChat(object.list, add.names = names(object.list), cell.prefix = TRUE)
+  
+  object.list <- list(TP_N1 = spleen_TP_N1, TP_T4 = spleen_TP_T4)
+  S4 <- mergeCellChat(object.list, add.names = names(object.list), cell.prefix = TRUE)
+  
+  object.list <- list(TP_N1 = spleen_TP_N1, TP_T5 = spleen_TP_T5)
+  S5 <- mergeCellChat(object.list, add.names = names(object.list), cell.prefix = TRUE)
+  
+  object.list <- list(TP_T2 = spleen_TP_T2, TP_T3 = spleen_TP_T3)
+  S2_S3 <- mergeCellChat(object.list, add.names = names(object.list), cell.prefix = TRUE)
+  
+  object.list <- list(TP_T2 = spleen_TP_T2, TP_T4 = spleen_TP_T4)
+  S2_S4 <- mergeCellChat(object.list, add.names = names(object.list), cell.prefix = TRUE)
+  
+  
+  
+#Bone marrows
+  object.list <- list(TP_N1 = bone_marrow_TP_N1, TP_T2 = bone_marrow_TP_T2)
+  B2 <- mergeCellChat(object.list, add.names = names(object.list), cell.prefix = TRUE)
+  
+  object.list <- list(TP_N1 = bone_marrow_TP_N1, TP_T3 = bone_marrow_TP_T3)
+  B3 <- mergeCellChat(object.list, add.names = names(object.list), cell.prefix = TRUE)
+
+    object.list <- list(TP_N1 = bone_marrow_TP_N1, TP_T4 = bone_marrow_TP_T4)
+  B4 <- mergeCellChat(object.list, add.names = names(object.list), cell.prefix = TRUE)
+  
+  object.list <- list(TP_N1 = bone_marrow_TP_N1, TP_T5 = bone_marrow_TP_T5)
+  B5 <- mergeCellChat(object.list, add.names = names(object.list), cell.prefix = TRUE)
+  
+  object.list <- list(TP_T2 = bone_marrow_TP_T2, TP_T4 = bone_marrow_TP_T4)
+  B2_B4 <- mergeCellChat(object.list, add.names = names(object.list), cell.prefix = TRUE)
+  
+  object.list <- list(TP_T2 = bone_marrow_TP_T2, TP_T3 = bone_marrow_TP_T3)
+  B2_B3 <- mergeCellChat(object.list, add.names = names(object.list), cell.prefix = TRUE)
+
+
+merged_chat_list <- c("S2","S3","S4", "S5","S2_S3", "S2_S4", "B2", "B3", "B4", "B5", "B2_B3", "B2_B4" )
+```
+
+
+```{r}
+for (item in c("B2", "B3", "B4", "B5", "B2_B3", "B2_B4" )) {
+  cellchat <- get(i)
+  levels(cellchat@meta$labels)[levels(cellchat@meta$labels) =='Pre-B cells' ] <- 'B cells' 
+  levels(cellchat@meta$labels)[levels(cellchat@meta$labels) =='Pro-B cells' ] <- 'B cells'
+  levels(cellchat@meta$labels)[levels(cellchat@meta$labels) =='Neutrophil Progenitors' ] <- 'Pro-Neutrophils'
+
+  cellchat@meta$cell_types <- cellchat@meta[["labels"]]
+  cellchat <- setIdent(cellchat, ident.use = "cell_types") # set "cell_type" as default cell identity
+  
+  assign(item, cellchat)
+}
+
+cell_df <- c("Neutrophils", "Monocytes", "DCs", "Macrophages", "Neutrophil Progenitors", "NK cells", "B cells", "CD8+ T cells", "CD4+ T cells" )
+```
+
+
+
+```{r}
+for (i in merged_chat_list) {
+  
+  cellchat <- get(i)
+  
+  #ht1 <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "outgoing")
+  #ht2 <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "incoming")
+  #print(ht1 + ht2)
+  
+  ptm = Sys.time()
+  gg1 <- compareInteractions(cellchat, show.legend = F, group = c(1,2)) + theme(axis.text.x=element_text(size=12, hjust=1 ),
+                                                                             axis.text.y=element_text(size=12),
+                                                                             axis.title.y = element_text(size=15),)+ coord_flip() +
+  gg2 <- compareInteractions(cellchat, show.legend = F, group = c(1,2), measure = "weight") + theme(axis.text.x=element_text(size=12,  hjust=1 ),
+                                                                             axis.text.y=element_text(size=12),
+                                                                             axis.title.y = element_text(size=15),)+ coord_flip() +
+  print(gg1 + gg2)
+  
+  netVisual_diffInteraction(cellchat, weight.scale = T) + theme(axis.text.x=element_text(size=12, angle=45, hjust=1 ),
+                                                                             axis.text.y=element_text(size=12))
+                                                                             #axis.title.y = element_text(size=15),
+  netVisual_diffInteraction(cellchat, weight.scale = T, measure = "weight") + theme(axis.text.x=element_text(size=12, angle=45, hjust=1 ),
+                                                                             axis.text.y=element_text(size=12))
+                                                                             #axis.title.y = element_text(size=15),)
+  
+  gg1 <- netVisual_heatmap(cellchat, font.size = 15, font.size.title = 15) 
+  #> Do heatmap based on a merged object
+  gg2 <- netVisual_heatmap(cellchat, measure = "weight", font.size = 15, font.size.title = 15) 
+  #> Do heatmap based on a merged object
+  print(gg1)
+  print(gg2)
+  
+  gg1 <- rankNet(cellchat, mode = "comparison", measure = "weight", sources.use = NULL, targets.use = NULL, stacked = T, do.stat = TRUE) + theme(axis.text.x=element_text(size=12, angle=45, hjust=1 ),axis.text.y=element_text(size=12),legend.text=element_text(size=12)) 
+  gg2 <- rankNet(cellchat, mode = "comparison", measure = "weight", sources.use = NULL, targets.use = NULL, stacked = F, do.stat = TRUE) + theme(axis.text.x=element_text(size=12, angle=45, hjust=1 ),axis.text.y=element_text(size=12), legend.text=element_text(size=12))
+  
+  print(gg1 + gg2)
+  
+  }
+
+
+```
+
+
+
+
+
+```{r}
+### Identify signals contributing most to outgoing or incoming signaling of certain cell groups
+We can also answer the question on which signals contributing most to outgoing or incoming signaling of certain cell groups.
+```{r, fig.width=11, fig.height = 6, fig.align = "center"}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+ht1 <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "outgoing")
+ht2 <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "incoming")
+ht1 + ht2
+
+rankNet(S2_S4, mode = "comparison", measure = "weight", sources.use = NULL, targets.use = NULL, stacked = T, do.stat = TRUE) + rankNet(S2_S4, mode = "comparison", measure = "weight", sources.use = NULL, targets.use = NULL, stacked = F, do.stat = TRUE)
+```
+
+
+```{r}
+for (i in merged_chat_list) {
+    
+    cellchat <- get(i)
+    
+    #ht1 <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "outgoing")
+    #ht2 <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "incoming")
+    #print(ht1 + ht2)
+    
+    ptm = Sys.time()
+    gg1 <- compareInteractions(cellchat, show.legend = F, group = c(1,2)) + theme(axis.text.x=element_text(size=12, hjust=1 ),
+                                                                                  axis.text.y=element_text(size=12),
+                                                                                  axis.title.y = element_text(size=15),)+ coord_flip() 
+    gg2 <- compareInteractions(cellchat, show.legend = F, group = c(1,2), measure = "weight") + theme(axis.text.x=element_text(size=12,  hjust=1 ), axis.text.y=element_text(size=12), axis.title.y = element_text(size=15),)+ coord_flip()  
+    
+    print(gg1)
+    }
+```
+
+
+
+
+
+
+
+
+
+```{r}
+data.input1 = data.input[, cell.use1]
+meta1 = meta[cell.use1, ]
+
+############### Before processing the control cellchat object, run code here below
+#meta1$seurat_clusters <- droplevels(meta1$seurat_clusters, exclude = c("Late Pro-Bcells"))
+#x = subset(meta, !labels == "Late Pro-Bcells")
+#meta1$labels = droplevels(meta1$labels, exclude = setdiff(levels(meta1$labels),unique(meta1$labels))) #Tofix the earlier encountered error when running the ComputeCellComProbab command
+
+data.input2 = data.input[, cell.use2]
+meta2 = meta[cell.use2, ]
+
+
+
+cellchat2 <- createCellChat(object = data.input2)
+cellchat2 <- addMeta(cellchat2, meta = meta2)
+cellchat2 <- setIdent(cellchat2, ident.use = "labels") # set "labels" as default cell identity
+levels(cellchat2@idents) # show factor levels of the cell labels
+groupSize <- as.numeric(table(cellchat2@idents)) # number of cells in each cell group
+
+```
+
+
+
+
+
+Spleen vs Bone marrow head on comparisons
+```{r}
+  group.new = levels(bone_marrow_TP_T2@idents)
+  spleen_TP_T2 <- liftCellChat(spleen_TP_T2, group.new)
+  spleen_TP_T2 <- updateCellChat(spleen_TP_T2)
+  object.list <- list(Spleen_peak = spleen_TP_T2, Bone_marrow_peak = bone_marrow_TP_T2)
+  TP2_comparisons <- mergeCellChat(object.list, add.names = names(object.list), cell.prefix = TRUE)
+  
+
+  cellchat = TP2_comparisons
+  
+ gg1 <- netVisual_heatmap(cellchat, font.size = 15, font.size.title = 15) 
+  #> Do heatmap based on a merged object
+  gg2 <- netVisual_heatmap(cellchat, measure = "weight", font.size = 15, font.size.title = 15) 
+  #> Do heatmap based on a merged object
+  print(gg1)
+  print(gg2)
+  
+
+ptm = Sys.time()
+  gg1 <- compareInteractions(cellchat, show.legend = F, group = c(1,2)) + theme(axis.text.x=element_text(size=12, hjust=1 ),
+                                                                             axis.text.y=element_text(size=12),
+                                                                             axis.title.y = element_text(size=15),)
+  gg2 <- compareInteractions(cellchat, show.legend = F, group = c(1,2), measure = "weight") + theme(axis.text.x=element_text(size=12,  hjust=1 ),
+                                                                             axis.text.y=element_text(size=12),
+                                                                             axis.title.y = element_text(size=15),)
+  print(gg1 + gg2)
+    
+gg1 <- rankNet(cellchat, mode = "comparison", measure = "weight", sources.use = NULL, targets.use = NULL, stacked = T, do.stat = TRUE) + theme(axis.text.x=element_text(size=12, angle=45, hjust=1 ),axis.text.y=element_text(size=12),legend.text=element_text(size=12)) 
+
+gg2 <- rankNet(cellchat, mode = "comparison", measure = "weight", sources.use = NULL, targets.use = NULL, stacked = F, do.stat = TRUE) + theme(axis.text.x=element_text(size=12, angle=45, hjust=1 ),axis.text.y=element_text(size=12), legend.text=element_text(size=12))
+  
+print(gg1)
+print(gg2)
+```
+
+
+
+
+
+
+

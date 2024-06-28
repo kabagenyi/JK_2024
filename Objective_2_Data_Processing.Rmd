@@ -1,0 +1,1391 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+```{r}
+rm(list=ls())
+```
+
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(CellChat)
+library(patchwork)
+library(sjmisc)
+library(cellhashR)
+library(tidyr)
+library(PloGO2)
+library(clustree)
+options(stringsAsFactors = FALSE)
+
+```
+
+
+
+```{r}
+data.dir <- "~/Documents/PhD_Project/Analysis"
+#dir.create(data.dir)
+setwd(data.dir)
+```
+
+Loading the datasets
+```{r}
+#### Loading datasets from the deep hto sequence run
+#TP_T1 <- Read10X(data.dir = "/Users/joycekabagenyi/Documents/Pchabaudi_deep/WebSum/TP-1/filtered_feature_bc_matrix")
+TP_N1 <- Read10X(data.dir = "/Users/joycekabagenyi/Documents/Pchabaudi_deep/WebSum/TP-N1/filtered_feature_bc_matrix")
+TP_T2 <- Read10X(data.dir = "/Users/joycekabagenyi/Documents/Pchabaudi_deep/WebSum/TP-2/filtered_feature_bc_matrix")
+TP_T3 <- Read10X(data.dir = "/Users/joycekabagenyi/Documents/Pchabaudi_deep/WebSum/TP-3/filtered_feature_bc_matrix")
+TP_T4 <- Read10X(data.dir = "/Users/joycekabagenyi/Documents/Pchabaudi_deep/WebSum/TP-4/filtered_feature_bc_matrix")
+TP_T5 <- Read10X(data.dir = "/Users/joycekabagenyi/Documents/Pchabaudi_deep/WebSum/TP-5/filtered_feature_bc_matrix")
+
+# Extracting the hashtags
+
+#htagsT1.all <- as.data.frame(TP_T1$`Antibody Capture`)
+htagsN1.all <- as.data.frame(TP_N1$`Antibody Capture`)
+htagsT2.all <- as.data.frame(TP_T2$`Antibody Capture`)
+htagsT3.all <- as.data.frame(TP_T3$`Antibody Capture`)
+htagsT4.all <- as.data.frame(TP_T4$`Antibody Capture`)
+htagsT5.all <- as.data.frame(TP_T5$`Antibody Capture`)
+  
+### Subseting for only the expression data hashtags
+#htagsT1 <- htagsT1.all[c("H_1_BM","H_1_BL","H_1_SP","H_2_BM","H_2_BL","H_2_SP"),]
+htagsN1 <- htagsN1.all[c("H_1_BM","H_1_BL","H_1_SP","H_2_BM","H_2_BL","H_2_SP"),]
+htagsT2 <- htagsT2.all[c("H_1_BM","H_1_BL","H_1_SP","H_2_BM","H_2_BL","H_2_SP"),]
+htagsT3 <- htagsT3.all[c("H_1_BM","H_1_BL","H_1_SP","H_2_BM","H_2_BL","H_2_SP"),]
+htagsT4 <- htagsT4.all[c("H_1_BM","H_1_BL","H_1_SP","H_2_BM","H_2_BL","H_2_SP"),]
+htagsT5 <- htagsT5.all[c("H_1_BM","H_1_BL","H_1_SP","H_2_BM","H_2_BL","H_2_SP"),]
+
+### Subseting for only the CITEseq data hashtags
+hashtag_list <- c("htagsN1.all", "htagsT2.all", "htagsT3.all", "htagsT4.all", "htagsT5.all")
+
+for (i in hashtag_list ) {
+  
+  timepoint.string = substring(i,6,7)
+  tagfile.name = paste("htags_citeseq_", timepoint.string, sep = "")
+  
+  assign(tagfile.name, get(i)[c("F4_80", "CD44", "CD71", "CD11c", "CD11b", "CD169"  ),])
+  
+  #tag.excel = paste("/Users/joycekabagenyi/Documents/PhD_Project/Analysis/CellhashR/", 
+                    #tagfile.name, sep = "")
+  #write.csv(get(tagfile.name), tag.excel)
+  
+}
+
+```
+
+Performing the Hastag demultiplexing for all timepoints
+```{r}
+
+files.list = c("TP_N1","TP_T2","TP_T3","TP_T4","TP_T5")
+hashtags.list = c("htagsN1","htagsT2","htagsT3","htagsT4","htagsT5")
+
+for (i in hashtag_list ) {
+  
+  timepoint.string = substring(i,6,7)
+  tagfile.name = paste("htags_citeseqx_", timepoint.string, sep = "")
+  
+  assign(tagfile.name, get(i)[c("F4_80", "CD44", "CD71", "CD11c", "CD11b", "CD169"  ),])
+}
+
+cseqtags.list = c("htags_citeseq_N1","htags_citeseq_T2",
+                  "htags_citeseq_T3","htags_citeseq_T4","htags_citeseq_T5")
+
+
+
+cell.summary <- data.frame()
+
+#install.packages('parallel')
+
+#library(parallel)
+  
+for (num in 1:length(cseqtags.list)) {
+  
+joint.bcs <- intersect(colnames(get(files.list[num])[["Gene Expression"]]), colnames(get(hashtags.list[num])))
+obj <- get(files.list[num])[["Gene Expression"]][, joint.bcs]
+tag.rna <- as.matrix(get(hashtags.list[num])[, joint.bcs])
+
+obj.tagged <- CreateSeuratObject(obj)
+obj.tagged <- NormalizeData(obj.tagged)
+obj.tagged <- FindVariableFeatures(obj.tagged, selection.method = "mean.var.plot")
+#obj.tagged <- ScaleData(obj.tagged, features = VariableFeatures(obj.tagged)) This part throws an error! "Error: vector memory exhausted (limit reached?)" but that is after reaching 100% processing
+
+# Adding HTO Data in the seurat object
+obj.tagged[["HTO"]] <- CreateAssayObject(counts = tag.rna)
+obj.tagged <- NormalizeData(obj.tagged, assay = "HTO", normalization.method = "CLR")  
+rownames(tag.rna)
+
+# Adding Citeseq Data in the seurat object
+joint.cseq <- intersect(colnames(get(files.list[num])[["Gene Expression"]]), colnames(get(cseqtags.list[num])))
+tag.citeseq <- as.matrix(get(cseqtags.list[num])[, joint.cseq])
+obj.tagged[["ADT"]] <- CreateAssayObject(counts = tag.citeseq)
+obj.tagged <- NormalizeData(obj.tagged, assay = "ADT", normalization.method = "CLR")  
+rownames(tag.citeseq)
+
+myraw.obj <- obj.tagged
+
+# Run HTODemux
+obj.tagged <- HTODemux(obj.tagged, assay = "HTO", positive.quantile = 0.99)
+
+test2 <- table(obj.tagged$HTO_classification.global)
+Idents(obj.tagged) <- "HTO_classification.global"
+
+testS <- rotate_df(as.data.frame(table(subset(obj.tagged,idents="Singlet")$HTO_maxID)), cn = T)
+testN <- rotate_df(as.data.frame(table(subset(obj.tagged,idents="Negative")$HTO_maxID)), cn = T)
+testD <- rotate_df(as.data.frame(table(subset(obj.tagged,idents="Doublet")$HTO_maxID)), cn = T)
+test.all <- rbind(testD, testN, testS)
+
+trtr <- cbind(test2,test.all)
+trtr$Time.point <- files.list[num]
+
+cell.summary <- rbind(cell.summary, trtr)
+
+
+#obj.tagged.subset <- subset(obj.tagged, idents = "Negative", invert = TRUE)
+obj.tagged.subset = obj.tagged
+
+DefaultAssay(obj.tagged.subset) <- "HTO"
+
+obj.tagged.subset <- ScaleData(obj.tagged.subset, features = rownames(obj.tagged.subset),
+                                 verbose = FALSE)
+obj.tagged.subset <- RunPCA(obj.tagged.subset, features = rownames(obj.tagged.subset), approx = FALSE)
+
+obj.tagged.subset <- RunTSNE(obj.tagged.subset, dims = 1:8, perplexity = 100, check_duplicates =FALSE)
+
+assign(paste(files.list[num],".demux", sep = ""),obj.tagged.subset) # creating a timepoint specific final object 
+
+}
+
+s.inf <- sessionInfo()
+```
+
+Drawing cell summary graphs
+```{r}
+write.csv(cell.summary, "/Users/joycekabagenyi/Documents/PhD_Project/Analysis/Preliminary_analysis/cell.summary")
+cell.summary.long <- pivot_longer(cell.summary, cols = "H-1-BL":"H-2-SP", names_to = "Tissue", values_to = "Cell.counts")
+#View(cell.summary.long)
+cell.summary.long <- cell.summary.long %>%
+  mutate(Sample.tissue = case_when(grepl("*-BL", Tissue) ~ "Blood",
+                                   grepl("*-BM", Tissue) ~ "Bone_Marrow",
+                                   grepl("*-SP", Tissue) ~ "Spleen"))
+
+### Bubble Plot
+ggplot(cell.summary.long, aes(x = Tissue , y = Cell.counts, 
+                       size = Cell.counts, color = Sample.tissue, shape = Var1)) +
+  scale_y_continuous(limits = c(0, 4500))+
+  geom_point(alpha = 0.7) +
+  scale_size_continuous(range = c(3, 15)) +
+  scale_color_discrete(name = "Method", direction = -1) +
+  labs(x = "Sample ID", y = "Number of Cells") +
+  theme_minimal() + theme(axis.text.x = element_text(angle = -45,hjust =0 ))+
+  facet_wrap(~Time.point)
+
+
+ggplot(subset(cell.summary.long, Var1=="Singlet"), aes(x = Tissue , y = Cell.counts, 
+                       size = Cell.counts, color = Sample.tissue, shape ="Triangle")) +
+  scale_y_continuous(limits = c(0, 4500))+
+  geom_point(alpha = 0.7) +
+  scale_size_continuous(range = c(3, 15)) +
+  scale_color_discrete(name = "Method", direction = -1) +
+  labs(x = "Sample ID", y = "Number of Cells") +
+  theme_minimal() + theme(axis.text.x = element_text(angle = -45,hjust =0 ))+
+  facet_wrap(~Time.point)
+
+```
+
+
+```{r}
+#### Deeper HTOs
+write.csv(cell.summary, "/Users/joycekabagenyi/Documents/PhD_Project/Analysis/CellhashR/deep/cell.summary")
+cell.summary.long <- pivot_longer(cell.summary, cols = "H-1-BL":"H-2-SP", names_to = "Tissue", values_to = "Cell.counts")
+#View(cell.summary.long)
+cell.summary.long <- cell.summary.long %>%
+  mutate(Sample.tissue = case_when(grepl("*-BL", Tissue) ~ "Blood",
+                                   grepl("*-BM", Tissue) ~ "Bone_Marrow",
+                                   grepl("*-SP", Tissue) ~ "Spleen"))
+
+### Bubble Plot
+ggplot(cell.summary.long, aes(x = Tissue , y = Cell.counts, 
+                       size = Cell.counts, color = Sample.tissue, shape = Var1)) +
+  scale_y_continuous(limits = c(0, 4500))+
+  geom_point(alpha = 0.7) +
+  scale_size_continuous(range = c(3, 15)) +
+  scale_color_discrete(name = "Method", direction = -1) +
+  labs(x = "Sample ID", y = "Number of Cells") +
+  theme_minimal() + theme(axis.text.x = element_text(angle = -45,hjust =0 ))+
+  facet_wrap(~Time.point)
+
+
+ggplot(subset(cell.summary.long, Var1=="Singlet"), aes(x = Tissue , y = Cell.counts, 
+                       size = Cell.counts, color = Sample.tissue, shape ="Triangle")) +
+  scale_y_continuous(limits = c(0, 4500))+
+  geom_point(alpha = 0.7) +
+  scale_size_continuous(range = c(3, 15)) +
+  scale_color_discrete(name = "Method", direction = -1) +
+  labs(x = "Sample ID", y = "Number of Cells") +
+  theme_minimal() + theme(axis.text.x = element_text(angle = -45,hjust =0 ))+
+  facet_wrap(~Time.point)
+
+for (i in files.list) {
+  mydt = subset(cell.summary.long,Time.point == i)
+  p = ggplot(data = as.data.frame(mydt), aes(x = Tissue, y = Cell.counts)) +
+      geom_col(aes(fill = Var1), width = 0.7)+
+      geom_text(aes(y = Cell.counts, label = paste(Cell.counts), group
+                =Tissue),position=position_stack(vjust=0.5), color = "floralwhite", size =2)+
+      scale_fill_manual("Var1", values=c("Singlet"="#476c8a", "Negative"="#6497b1", "Doublet"="#b3cde0")) +
+      labs(x="Tissue", y="Number of cells") +
+      theme_classic() + theme(axis.text.x = element_text(angle = -45,hjust =0 ))
+  print(p)
+}
+
+ggplot(data = as.data.frame(cell.summary.long), 
+       aes(x = Tissue, y = Cell.counts)) +
+  geom_col(aes(fill = Var1), colour = "black", width = 0.7)+
+  #geom_col(colour = "black")+ 
+  #geom_text(aes(y = Cell.counts, label = paste(Cell.counts), group
+                #= Tissue),position=position_stack(vjust=0.95), color = "floralwhite", size =2)+
+  facet_wrap(~Time.point, scales = "free") + 
+  scale_fill_manual("Var1", values=c("Singlet"="#476c8a", "Negative"="#6497b1", "Doublet"="#b3cde0")) +
+  theme_classic() + theme(axis.text.x = element_text(angle = -45,hjust =0 ))
+
+ggplot(data = as.data.frame(cell.summary.long), 
+       aes(x = Time.point, y = Cell.counts)) +
+  geom_col(aes(fill = Var1), colour = "black", width = 0.7)+
+  #geom_col(colour = "black")+ 
+  #facet_wrap(~Time.point, scales = "free") + 
+  scale_fill_manual("Var1", values=c("Singlet"="#476c8a", "Negative"="#6497b1", "Doublet"="#b3cde0")) +
+  theme_classic() + theme(axis.text.x = element_text(angle = -45,hjust =0 ))
+
+```
+
+Bar plots
+```{r}
+for (i in files.list) {
+  mydt = subset(cell.summary.long,Time.point == i)
+  p = ggplot(data = as.data.frame(mydt), aes(x = Tissue, y = Cell.counts)) +
+      geom_col(aes(fill = Var1), width = 0.7)+
+      geom_text(aes(y = Cell.counts, label = paste(Cell.counts), group
+                =Tissue),position=position_stack(vjust=0.5), color = "floralwhite", size =2)+
+      scale_fill_manual("Var1", values=c("Singlet"="#476c8a", "Negative"="#6497b1", "Doublet"="#b3cde0")) +
+      labs(x="Tissue", y="Number of cells") +
+      theme_classic() + theme(axis.text.x = element_text(angle = -45,hjust =0 ))
+  print(p)
+}
+
+ggplot(data = as.data.frame(cell.summary.long), 
+       aes(x = Tissue, y = Cell.counts)) +
+  geom_col(aes(fill = Var1), colour = "black", width = 0.7)+
+  #geom_col(colour = "black")+ 
+  #geom_text(aes(y = Cell.counts, label = paste(Cell.counts), group
+                #= Tissue),position=position_stack(vjust=0.95), color = "floralwhite", size =2)+
+  facet_wrap(~Time.point, scales = "free") + 
+  scale_fill_manual("Var1", values=c("Singlet"="#476c8a", "Negative"="#6497b1", "Doublet"="#b3cde0")) +
+  theme_classic() + theme(axis.text.x = element_text(angle = -45,hjust =0 ))
+
+ggplot(data = as.data.frame(cell.summary.long), 
+       aes(x = Time.point, y = Cell.counts)) +
+  geom_col(aes(fill = Var1), colour = "black", width = 0.7)+
+  #geom_col(colour = "black")+ 
+  #facet_wrap(~Time.point, scales = "free") + 
+  scale_fill_manual("Var1", values=c("Singlet"="#476c8a", "Negative"="#6497b1", "Doublet"="#b3cde0")) +
+  theme_classic() + theme(axis.text.x = element_text(angle = -45,hjust =0 ))
+```
+
+
+Importing CellhashR call files
+```{r}
+mydir <- "~/Documents/PhD_Project/Analysis/CellhashR/"
+N1_callFile <- read.delim(paste0(mydir, "deep/2_of_4_calls/adjusted_hto_N1_callFile"))
+T2_callFile <- read.delim(paste0(mydir, "deep/2_of_4_calls/adjusted_hto_T2_callFile"))
+T3_callFile <- read.delim(paste0(mydir, "deep/2_of_4_calls/adjusted_hto_T3_callFile"))
+T4_callFile <- read.delim(paste0(mydir, "deep/2_of_4_calls/adjusted_hto_T4_callFile"))
+T5_callFile <- read.delim(paste0(mydir, "deep/2_of_4_calls/adjusted_hto_T5_callFile"))
+
+# replace the dot with a hyphen in cell_ids
+N1_callFile$cellbarcode <- gsub("\\.", "-", N1_callFile$cellbarcode)
+T2_callFile$cellbarcode <- gsub("\\.", "-", T2_callFile$cellbarcode)
+T3_callFile$cellbarcode <- gsub("\\.", "-", T3_callFile$cellbarcode)
+T4_callFile$cellbarcode <- gsub("\\.", "-", T4_callFile$cellbarcode)
+T5_callFile$cellbarcode <- gsub("\\.", "-", T5_callFile$cellbarcode)
+```
+
+
+Add call data as meta data to the seurat objects
+```{r}
+row.names(N1_callFile) <- N1_callFile$cellbarcode
+TP_N1.demux <- AddMetaData(TP_N1.demux, metadata = N1_callFile)
+
+row.names(T2_callFile) <- T2_callFile$cellbarcode
+TP_T2.demux <- AddMetaData(TP_T2.demux, metadata = T2_callFile)
+
+row.names(T3_callFile) <- T3_callFile$cellbarcode
+TP_T3.demux <- AddMetaData(TP_T3.demux, metadata = T3_callFile)
+
+row.names(T4_callFile) <- T4_callFile$cellbarcode
+TP_T4.demux <- AddMetaData(TP_T4.demux, metadata = T4_callFile)
+
+row.names(T5_callFile) <- T5_callFile$cellbarcode
+TP_T5.demux <- AddMetaData(TP_T5.demux, metadata = T5_callFile)
+
+```
+
+
+Removing the no longer useful data frames going forward
+```{r}
+
+rm("htagsT1","htagsN1","htagsT2","htagsT3","htagsT4","htagsT5")
+rm("TP_T1","TP_N1","TP_T2","TP_T3","TP_T4","TP_T5")
+rm("htagsT1.all","htagsN1.all","htagsT2.all","htagsT3.all","htagsT4.all","htagsT5.all")
+rm("htags_citeseq_T1","htags_citeseq_N1","htags_citeseq_T2","htags_citeseq_T3","htags_citeseq_T4","htags_citeseq_T5")
+
+```
+
+
+Checking the demultiplexing performance, Please go to the cellhashR notebook for this and then come back
+
+Now continue with QC step of data processing
+
+```{r}
+chabaudi.all <- c(TP_N1.demux, TP_T2.demux, TP_T3.demux, TP_T4.demux, TP_T5.demux)
+chabaudi.all
+chabaudi.all <- lapply(chabaudi.all, FUN = function(x) {
+    DefaultAssay(x) <- "RNA" 
+    #x <- subset(x,idents = "Singlet") # work with truly assigned singlet cells
+    x[["percent.mt"]] <- PercentageFeatureSet(x, pattern = "mt-") # Calculate mouse mitochondrial genes
+    x[["PbPercent.mt"]] <- PercentageFeatureSet(x, pattern = "*PBANKA-MIT") # Parasite mitochondrial genes
+return(x)
+})
+```
+
+
+Call numbers summary
+```{r}
+# split aggregated data by sample
+names(chabaudi.all) <- c("TP_N1.demux", "TP_T2.demux", "TP_T3.demux", "TP_T4.demux", "TP_T5.demux")
+for (i in 1:5) {
+  tble <- as.data.frame(table(chabaudi.all[[i]]@meta.data[["consensuscall"]]))
+  print(tble)
+  myfile <- names(chabaudi.all)[i]
+  cols <- c("Doublet" = "black", "H_1_SP"= "blue",  "H_2_SP" = "blue", "H_1_BM" = "darkgreen", "H_2_BM" = "darkgreen", 
+            "H_1_BL" = "red", "H_2_BL" = "red", "Discordant" = "orange", "Negative" = "purple", "Low Counts" = "hotpink")
+  
+  g <- ggplot(data = tble, 
+              aes(x = factor(Var1, level=c("Low Counts", "Negative", "Discordant", "Doublet",  "H_1_BL", "H_2_BL",
+                                           "H_1_BM", "H_2_BM", "H_1_SP", "H_2_SP" )), 
+                  y = Freq, color = Var1)) + 
+    geom_bar(stat ="identity", fill="white") +
+    labs(x="Hash tag consensus call", y="Number of cells") +
+    scale_colour_manual(values = cols) +
+    geom_text(aes(label = Freq, vjust = -.3, colour = "black", angle = 0, family = "Times New Roman")) +
+    theme_classic() + 
+    theme(axis.text.x = element_text(angle = -45,hjust =0 ))+ 
+    theme(plot.title = element_text(size=20)) +
+    ggtitle(paste(strsplit(myfile,"[.]")[[1]][1], "(", "n = ", sum(tble$Freq), ")", sep = ""))
+  
+  print(g)
+}
+```
+
+
+Now continue with QC step of data processing
+
+QC graphs for all samples
+```{r}
+lapply(chabaudi.all, FUN = function(x) {
+    DefaultAssay(x) <- "RNA" 
+    Idents(x) <- x@meta.data$consensuscall.global
+    #x <- subset(x,idents = "Singlet") # work with truly assigned singlet cells
+    plot1 <- FeatureScatter(x, feature1 = "nCount_RNA", feature2 = "percent.mt") 
+    plot2 <- FeatureScatter(x, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") 
+    plot3 <- FeatureScatter(x, feature1 = "nCount_RNA", feature2 = "PbPercent.mt")
+    vplot<- VlnPlot(x, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),ncol = 3)
+    print(vplot)
+    #print(plot1 + plot2 + plot3)
+    print(plot1 + plot2)
+    print(plot3)
+})
+
+```
+
+
+QC: data cleaning based on QC features
+
+```{r}
+qc_list <- list(
+  #c(150, 8000, 6), TP-T1 no analysed here
+  c(150, 7000, 10),
+  c(150, 7500, 10),
+  c(150, 7000, 8),
+  c(150, 7000, 8),
+  c(150, 7000, 10))
+
+
+for(i in 1:length(chabaudi.all)){
+  current <- chabaudi.all[[i]]
+  current <- subset(current, nFeature_RNA > qc_list[[i]][1] & nFeature_RNA < qc_list[[i]][2] & percent.mt < qc_list[[i]][3])
+  chabaudi.all[i] <- current
+}
+```
+
+
+Now check QC'd samples plots
+```{r}
+lapply(chabaudi.all, FUN = function(x) {
+    DefaultAssay(x) <- "RNA" 
+    Idents(x) <- x@meta.data$consensuscall.global
+    plot1 <- FeatureScatter(x, feature1 = "nCount_RNA", feature2 = "percent.mt") 
+    plot2 <- FeatureScatter(x, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") 
+    plot3 <- FeatureScatter(x, feature1 = "nCount_RNA", feature2 = "PbPercent.mt")
+    vplot<- VlnPlot(x, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),ncol = 3, pt.size = 0)
+    print(vplot)
+    #print(plot1 + plot2 + plot3)
+    print(plot1 + plot2)
+    print(plot3)
+})
+
+```
+
+Remove the negative, low counts cells from further analysis
+```{r}
+chabaudi.all
+keep.cells = c("Singlet", "Discordant", "Doublet")
+chabaudi.all <- lapply(chabaudi.all, FUN = function(x) {
+    DefaultAssay(x) <- "RNA" 
+    Idents(x) <- x@meta.data$consensuscall.global
+    x <- subset(x, idents = keep.cells ) # work with truly assigned singlet cells, dublets and the discordants
+return(x)
+})
+
+```
+
+
+Now check QC'd samples plots after subsetting
+```{r}
+lapply(chabaudi.all, FUN = function(x) {
+    DefaultAssay(x) <- "RNA" 
+    Idents(x) <- x@meta.data$consensuscall.global
+    plot1 <- FeatureScatter(x, feature1 = "nCount_RNA", feature2 = "percent.mt") 
+    plot2 <- FeatureScatter(x, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") 
+    plot3 <- FeatureScatter(x, feature1 = "nCount_RNA", feature2 = "PbPercent.mt")
+    vplot<- VlnPlot(x, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),ncol = 3)
+    print(vplot)
+    
+    print(plot1 + plot2)
+    
+})
+
+```
+
+
+
+Save the Chabaudi processed files
+```{r}
+#names(chabaudi.all)
+save(chabaudi.all, file = "chabaudi_list_all.RData") # QC'ed bone marrow objects
+
+# To read this object in, please use the command below
+# load("~/Documents/PhD_Project/Analysis/chabaudi_list_all.RData")
+```
+
+
+Check QC'd data
+```{r}
+lapply(chabaudi.all, FUN = function(x) {
+  DefaultAssay(x) <- "RNA" 
+  plot1 <- FeatureScatter(x, feature1 = "nCount_RNA", feature2 = "percent.mt") 
+  plot2 <- FeatureScatter(x, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") 
+  vplot<- VlnPlot(x, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),ncol = 3)
+  
+  print(vplot)
+  print(plot1 + plot2)
+
+})
+```
+
+
+Extract out Seurat objects for each tissue
+```{r}
+files.list = c("TP_N1","TP_T2","TP_T3","TP_T4","TP_T5")
+dta_list <- c("BM", "SP") #  Omitting "BL" because for some timepoints, there were no more blood cells left after qc
+tissue_list <- c("BoneMarrow", "Blood", "Spleen")
+for (i in 1:length(dta_list)) {
+    htos = c(paste("H_1_", dta_list[i], sep = "" ), paste("H_2_", dta_list[i], sep = "" ))
+    seurat_files_name = paste(dta_list[i], "_Chabaudi_Seurat", sep = "")
+    counter <- 0
+  BM <- lapply(chabaudi.all, FUN = function(x) {
+        DefaultAssay(x) <- "RNA" 
+        counter <<- counter+1
+        Idents(x) <- x@meta.data$consensuscall
+        x <- subset(x, idents = htos ) # work with truly assigned singlet cells and the discordants
+        x[["TimePoint"]] <- files.list[counter]
+        x[["Tissue"]] <- tissue_list[i]
+    
+    return(x)
+    })
+  names(BM) <- files.list
+  assign(seurat_files_name, BM)
+  }
+
+```
+
+
+save the clean qc'd object for future analysis
+```{r}
+saveRDS(BM_Chabaudi_Seurat, "BM_Chabaudi_Seurat.rds")
+saveRDS(SP_Chabaudi_Seurat, "SP_Chabaudi_Seurat.rds")
+```
+
+
+
+
+
+
+```{r}
+
+qc_list_bm <- list(
+c(150, 8000, 5),
+c(150, 8000, 7),
+c(150, 8000, 7.5),
+c(150, 7500, 8),
+c(150, 8000, 5),
+c(150, 8000, 6))
+
+
+for(i in 1:length(bm_Chabaudi_Seurat)){
+  current <- BM_Chabaudi_Seurat[[i]]
+  current <- subset(current, nFeature_RNA > qc_list_bm[[i]][1] & nFeature_RNA < qc_list_bm[[i]][2] & percent.mt < qc_list_bm[[i]][3])
+  BM_Chabaudi_Seurat[i] <- current
+}
+
+
+```
+
+
+```{r}
+  for (i in 1:6) {
+  options(repr.plot.width=10, repr.plot.height=10)
+  plot1 <- FeatureScatter(BL_Chabaudi_Seurat[[i]], feature1 = "nCount_RNA", feature2 = "percent.mt")
+  plot2 <- FeatureScatter(BL_Chabaudi_Seurat[[i]], feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+  print(plot1 + plot2)
+  }
+
+```
+
+Now continuing with only the bone marrow objects
+
+Checking the transformation method to use
+```{r}
+
+lapply(BM_Chabaudi_Seurat, FUN = function(x) {
+
+my_timepoint = unique(x@meta.data[["TimePoint"]])
+# Raw data
+options(repr.plot.width=15, repr.plot.height=10)
+plot1 <- hist(colSums(x@assays$RNA@data),
+breaks = 100,
+main = paste(my_timepoint, "Total expression before normalisation"),
+xlab = "Sum of expression")
+print(plot1)
+
+# Normal transformed data
+sample1_normalised <- NormalizeData(object = x,
+normalization.method = "LogNormalize",
+scale.factor = 1e4)
+plot2 <- hist(colSums(sample1_normalised@assays$RNA@data),
+breaks = 100,
+main = paste(my_timepoint,"Total expression after Log normalisation"),
+xlab = "Sum of expression")
+print(plot2)
+
+# SCT transformed data
+sample1_normalised_sct <- SCTransform(object = x)
+plot3 <- hist(colSums(sample1_normalised_sct@assays$SCT@data),
+breaks = 100,
+main = paste(my_timepoint,"Total expression after SCT normalisation"),
+xlab = "Sum of expression")
+print(plot3)
+
+})
+```
+
+
+Working on each timepoint alone
+```{r}
+BM_Chabaudi_Seurat <- lapply(BM_Chabaudi_Seurat, FUN = function(x) {
+
+x <- NormalizeData(x, normalization.method = "LogNormalize", scale.factor = 10000)
+x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
+
+top10 <- head(VariableFeatures(x), 10)
+plot7 <- VariableFeaturePlot(x)
+plot8 <- LabelPoints(plot = plot7, points = top10, repel = TRUE)
+print(plot7) 
+print(plot8)
+
+all.genes <- rownames(x)
+x <- ScaleData(x, features = all.genes)
+# Linear data reduction
+
+x <- RunPCA(x, features = VariableFeatures(object = x),npcs = 50)
+elb_plot <- ElbowPlot(x,ndims = 50)
+
+print(elb_plot)
+
+combined <- RunUMAP(x, reduction = "pca", dims = 1:30)
+combined <- FindNeighbors(combined, reduction = "pca", dims = 1:30)
+resolution.range <- seq(from = 0, to = 1, by = 0.1)
+# Find clusters using a range of resolutions
+combined <- FindClusters(object = combined, resolution = resolution.range)
+ tree_plot <- clustree(combined)
+ print(tree_plot)
+
+return(x)
+
+
+})
+```
+
+PCAs and etc
+```{r}
+BM_Chabaudi_Seurat <- lapply(BM_Chabaudi_Seurat, FUN = function(x) {
+x <- RunUMAP(x, reduction = "pca", dims = 1:31)  
+x <- FindNeighbors(x, dims = 1:31) # Taking 40 clusters, based on the elbow plot output, even  31 would work
+
+if (counter == 4) {
+    x <- FindClusters(x, resolution = 0.3)
+  } else if (counter == 6) {
+    x <- FindClusters(x, resolution = 0.15)
+  } else 
+    x <- FindClusters(x, resolution = 0.2)
+
+return(x)
+
+})
+```
+
+Drawing the UMAPS
+```{r}  
+cell.counts <- data.frame()
+for (i in 1:6) {
+  p <- DimPlot(BM_Chabaudi_Seurat[[i]], reduction = "umap", label = TRUE)+
+    ggtitle(paste(files.list[i],"UMAP", sep = "  "))
+  print(p)
+  cell.counts <- as.data.frame(table(Idents(subset(BM_Chabaudi_Seurat[[i]])))) 
+  sum(cell.counts$Freq)
+  
+}
+
+```
+Exploring CITEseq data within the individual samples
+
+```{r} 
+for (i in 1:6) {
+  p<- DimPlot(BM_Chabaudi_Seurat[[i]], reduction = "umap", label = TRUE)+
+    ggtitle(paste(files.list[i],"UMAP", sep = "  "))
+  print(p)
+
+  DefaultAssay(BM_Chabaudi_Seurat[[i]]) <- "ADT"
+  p1a <- FeaturePlot(BM_Chabaudi_Seurat[[i]], "CD71", cols = c("lightgrey", "darkgreen")) + ggtitle("CD71 protein")
+  p1b <- VlnPlot(BM_Chabaudi_Seurat[[i]],features=c("CD71")) +
+    ggtitle("CD71 RNA Violin")
+  
+  DefaultAssay(BM_Chabaudi_Seurat[[i]]) <- "RNA"
+  p2a <- FeaturePlot(BM_Chabaudi_Seurat[[i]], "CD71") + ggtitle("CD71 RNA")
+  p2b <- VlnPlot(BM_Chabaudi_Seurat[[i]],features=c("CD71")) +
+    ggtitle("CD71 RNA Violin")
+
+# place plots side-by-side
+  myplot_f <- (p1a | p2a)
+  print(myplot_f)
+
+  myplot_v <- (p1b | p2b)
+  print(myplot_v)
+
+}
+
+```
+
+
+Finding the different cell types in the clusters
+```{r}
+for (i in 1:6) {
+#Proerynthroblasts
+  p <- VlnPlot(BM_Chabaudi_Seurat[[i]],features=c("Epb42","Trim10", "Tspan33", "Ermap", "Klf1", "Slc4a1")) +
+    ggtitle(paste(files.list[i],"UMAP-Proerynthroblasts", sep = "  "))
+  print(p)
+  
+#Erynthroblasts
+  p <- VlnPlot(BM_Chabaudi_Seurat[[i]],features=c("Hba-a1", "Hbb-bt", "Hba-a2", "Hbb-bs", "Alas2", "Bpgm")) +
+    ggtitle(paste(files.list[i],"UMAP-Erynthroblasts", sep = "  "))
+  print(p)
+  
+#B-cells
+  p <- VlnPlot(BM_Chabaudi_Seurat[[i]],features=c("Cd79a", "Cd79b", "Bank1", "Ighd", "Blnk", "Cd74")) +
+    ggtitle(paste(files.list[i],"UMAP-B Cells", sep = "  "))
+  print(p)
+  
+#T-cells
+  p <- VlnPlot(BM_Chabaudi_Seurat[[i]],features=c("Ccl5", "Ms4a4b",	"Thy1",	"Gimap4", "Gimap3", "Cd3d")) +
+    ggtitle(paste(files.list[i],"UMAP-T cells", sep = "  "))
+  print(p)  
+  
+#DCs
+  p <- VlnPlot(BM_Chabaudi_Seurat[[i]],features=c("Siglech",	"Havcr1",	"Ccr9",	"Grm8", "Slc41a2", "Ddr1")) +
+    ggtitle(paste(files.list[i],"UMAP-DCs", sep = "  "))
+  print(p)  
+
+# Monocytes or Macrophages
+  p <- VlnPlot(BM_Chabaudi_Seurat[[i]],features=c("Ccl9", "Lrp1", "Ptpro", "Clec4a3", "Fn1", "Pid1")) +
+    ggtitle(paste(files.list[i],"UMAP-Monocytes or Macrophages", sep = "  "))
+  print(p) 
+  
+# Macrophages or are they monocytes
+  p <- VlnPlot(BM_Chabaudi_Seurat[[i]],features=c("Clec4a3",	"Sdc3",	"Dse",	"Clec4b1", "Csf1r", "Cd14")) +
+    ggtitle(paste(files.list[i],"UMAP-Macrophages or Monocytes", sep = "  "))
+  print(p) 
+
+# Neutrophils/Granuloctyes
+  p <- VlnPlot(BM_Chabaudi_Seurat[[i]],features=c("Orm1", "Fcnb", "Cebpe", "Ms4a3", "rna_Mogat2", "Ncam1")) +
+    ggtitle(paste(files.list[i],"UMAP-Neutrophils/Granuloctyes", sep = "  "))
+  print(p) 
+  
+}
+```
+
+
+Only the Spleen
+```{r} 
+### Only the Spleen
+
+myseurat.obj = subset(chabaudi.all[[i]], HTO_classification %in% c("H-1-SP", "H-2-SP")) 
+DefaultAssay(myseurat.obj) <- "RNA"
+
+myseurat.obj <- NormalizeData(myseurat.obj, normalization.method = "LogNormalize", scale.factor = 10000)
+myseurat.obj <- FindVariableFeatures(myseurat.obj, selection.method = "vst", nfeatures = 2000)
+
+top10 <- head(VariableFeatures(myseurat.obj), 10)
+plot7 <- VariableFeaturePlot(myseurat.obj)
+plot8 <- LabelPoints(plot = plot7, points = top10, repel = TRUE)
+plot7 
+plot8
+# Linear data reduction
+all.genes <- rownames(myseurat.obj)
+myseurat.obj <- ScaleData(myseurat.obj, features = all.genes)
+myseurat.obj <- RunPCA(myseurat.obj, features = VariableFeatures(object = myseurat.obj),npcs = 50)
+ElbowPlot(myseurat.obj,ndims = 50)
+myseurat.obj <- FindNeighbors(myseurat.obj, dims = 1:40) # Taking 40 clusters, based on the elbow plot output, even  31 would work
+myseurat.obj <- FindClusters(myseurat.obj, resolution = 0.18)
+# Look at cluster IDs of the first 5 cells
+#head(Idents(myseurat.obj), 5)
+
+myseurat.obj <- RunUMAP(myseurat.obj, dims = 1:40)
+
+DimPlot(myseurat.obj, reduction = "umap")
+DimPlot(myseurat.obj, reduction = "umap", label = TRUE)
+
+cell.counts <- as.data.frame(table(Idents(subset(x = myseurat.obj)))) 
+sum(cell.counts$Freq)
+```
+Only the Blood
+```{r} 
+### Only the Blood
+
+myseurat.obj = subset(chabaudi.all[[i]], HTO_classification %in% c("H-1-BL", "H-2-BL")) 
+DefaultAssay(myseurat.obj) <- "RNA"
+
+myseurat.obj <- NormalizeData(myseurat.obj, normalization.method = "LogNormalize", scale.factor = 10000)
+myseurat.obj <- FindVariableFeatures(myseurat.obj, selection.method = "vst", nfeatures = 2000)
+
+top10 <- head(VariableFeatures(myseurat.obj), 10)
+plot7 <- VariableFeaturePlot(myseurat.obj)
+plot8 <- LabelPoints(plot = plot7, points = top10, repel = TRUE)
+plot7 
+plot8
+# Linear data reduction
+all.genes <- rownames(myseurat.obj)
+myseurat.obj <- ScaleData(myseurat.obj, features = all.genes)
+myseurat.obj <- RunPCA(myseurat.obj, features = VariableFeatures(object = myseurat.obj),npcs = 50)
+ElbowPlot(myseurat.obj,ndims = 50)
+myseurat.obj <- FindNeighbors(myseurat.obj, dims = 1:20) # Taking 40 clusters, based on the elbow plot output, even  31 would work
+myseurat.obj <- FindClusters(myseurat.obj, resolution = 0.3)
+# Look at cluster IDs of the first 5 cells
+#head(Idents(myseurat.obj), 5)
+
+myseurat.obj <- RunUMAP(myseurat.obj, dims = 1:40)
+
+DimPlot(myseurat.obj, reduction = "umap")
+DimPlot(myseurat.obj, reduction = "umap", label = TRUE)
+
+cell.counts <- as.data.frame(table(Idents(subset(x = myseurat.obj)))) 
+sum(cell.counts$Freq)
+
+```
+
+
+
+Integration of the bonemarrow objects: i.e by timepoint
+
+```{r}
+# normalize and identify variable features for each dataset independently
+BM.list <- lapply(X = BM_Chabaudi_Seurat, FUN = function(x) {
+    DefaultAssay(x) <- "RNA" 
+    x <- NormalizeData(x)
+    x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 5000)
+})
+
+# select features that are repeatedly variable across datasets for integration
+features <- SelectIntegrationFeatures(object.list = BM.list)
+```
+
+Perform integration
+```{r}
+BM_chabudi.anchors <- FindIntegrationAnchors(object.list = BM.list, anchor.features = features)
+
+# this command creates an 'integrated' data assay  of all common features
+BM_chabaudi.combined <- IntegrateData(anchorset = BM_chabudi.anchors)
+```
+
+Perform an integrated analysis
+```{r}
+# specify that we will perform downstream analysis on the corrected data note that the
+# original unmodified data still resides in the 'RNA' assay
+DefaultAssay(BM_chabaudi.combined) <- "integrated"
+
+# Run the standard workflow for visualization and clustering
+BM_chabaudi.combined <- ScaleData(BM_chabaudi.combined, verbose = FALSE)
+BM_chabaudi.combined <- RunPCA(BM_chabaudi.combined, npcs = 50 , verbose = FALSE)
+ElbowPlot(BM_chabaudi.combined,ndims = 50)
+```
+
+
+```{r}
+BM_chabaudi.combined <- RunUMAP(BM_chabaudi.combined, reduction = "pca", dims = 1:45)
+BM_chabaudi.combined <- FindNeighbors(BM_chabaudi.combined, reduction = "pca", dims = 1:45)
+```
+
+
+```{r}
+BM_chabaudi.combined <- FindClusters(BM_chabaudi.combined, resolution = 0.2)
+
+```
+
+
+
+```{r}
+# Visualization
+#DimPlot(BM_chabaudi.combined, reduction = "umap", group.by = "Condition")
+DimPlot(BM_chabaudi.combined, reduction = "umap", group.by = "TimePoint")
+DimPlot(BM_chabaudi.combined, reduction = "umap", label = TRUE, repel = TRUE)
+DimPlot(BM_chabaudi.combined, reduction = "umap", label = TRUE, repel = TRUE) + NoLegend()
+```
+
+
+```{r}
+
+DimPlot(BM_chabaudi.combined, reduction = "umap", split.by = "TimePoint",label = TRUE, repel = TRUE)
+
+DimPlot(BM_chabaudi.combined, reduction = "umap",label = TRUE, repel = TRUE)
+
+```
+
+Save unlabelled and query labelled rds files
+```{r}
+saveRDS(BM_chabaudi.combined, file = "BM_chabaudi_combined_unlabelled.rds")
+```
+
+
+
+Transfering cluster labels
+```{r}
+
+# Using Franz's labelled object from Thomas
+#BM.combined_berghei_tdo <- readRDS("~/Documents/PhD_Project/Analysis/RDS_objects_first_analysis/BM.combined_berghei_tdo.rds")
+
+BM.combined_ref <- BM.combined_berghei_tdo
+BM_combined_query <- BM_chabaudi.combined
+#BM_combined_query <- NormalizeData(BM_combined_query)
+pancreas.anchors <- FindTransferAnchors(reference = BM.combined_ref, query = BM_combined_query, dims = 1:30,
+                                        reference.reduction = "pca")
+
+predictions <- TransferData(anchorset = pancreas.anchors, refdata = BM.combined_ref@meta.data[["BMIdent"]], dims = 1:30)
+BM_combined_query <- AddMetaData(BM_combined_query, metadata = predictions)
+
+
+Idents(BM_combined_query) <- BM_combined_query$predicted.id
+DimPlot(BM_combined_query, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+
+```
+
+Finding cluster markers to verify labelling
+```{r}
+DefaultAssay(BM_chabaudi.combined) <- "RNA"
+# SCT transformation
+library(sctransform)
+BM_chabaudi.combined <- SCTransform(BM_chabaudi.combined, vars.to.regress = "percent.mt", verbose = FALSE)
+
+# Use SCT transformed data
+DefaultAssay(BM_chabaudi.combined) <- "SCT"
+pbmc.markers <- FindAllMarkers(BM_chabaudi.combined, only.pos = TRUE)
+pbmc.markers %>%
+    group_by(cluster) %>%
+    #dplyr::filter(avg_log2FC > 0.2) %>%
+    #arrange(avg_log2FC, decreasing = TRUE) %>%
+    slice_head(n=6) %>%
+    pull(gene) -> best.wilcox.gene.per.cluster
+
+```
+
+
+```{r The top 12 expressed genes per cluster}
+# We can extract from this list the most upregulated gene from each cluster
+
+best.wilcox.gene.per.cluster
+# We can then plot these out.
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[1:6])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[7:12])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[13:18])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[19:24])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[25:30])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[31:36])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[37:42])
+VlnPlot(BM_chabaudi.combined,features=c("Cd8a", "Cd4"))
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[43:48])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[49:54])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[55:60])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[61:66])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[67:72])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[73:78])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[79:84])
+
+```
+
+
+```{r}
+# We can then plot feature plots for the same 
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[1:6], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[7:12], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[13:18], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[19:24], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[25:30], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[31:36], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[37:42], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=c("Cd8a", "Cd4", "Cd3", "Trbc2", "Ms4a4b", "Lef1"), min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[43:48], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[49:54], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[55:60], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[61:66], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[67:72], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[73:78], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[79:84], min.cutoff = "q9")
+
+```
+
+
+Label transfer from Fransiz data but keeping cells as cluster markers define them
+```{r}
+# select two technologies for the query datasets
+#BM.combined_berghei_tdo <- readRDS("~/Documents/PhD_Project/Analysis/RDS_objects_first_analysis/BM.combined_berghei_tdo.rds")
+BM.combined_ref <- BM.combined_berghei_tdo
+BM_combined_query <- BM_chabaudi.combined
+
+#BM_combined_query <- NormalizeData(BM_combined_query)
+pancreas.anchors <- FindTransferAnchors(reference = BM.combined_ref, query = BM_combined_query, dims = 1:30,
+                                        reference.reduction = "pca")
+predictions <- TransferData(anchorset = pancreas.anchors, refdata = BM.combined_ref@meta.data[["BMIdent"]], dims = 1:30)
+
+
+# editing the predicted clusters
+predictions_edit = predictions
+predictions_edit$seurat_ids = rownames(predictions)
+
+
+# get the original meta data with seurat clusters
+seurat_cluster_orig <- BM_combined_query@meta.data
+seurat_cluster_orig <- seurat_cluster_orig[,c("TimePoint", "seurat_clusters")]
+seurat_cluster_orig$seurat_ids <- rownames(seurat_cluster_orig)
+
+# merge the predicted meta data with the original meta data
+new_predictions <- merge(predictions_edit, seurat_cluster_orig, by = "seurat_ids")
+
+# Make sure the neutrophil(0,1), monocytes(4) and macrophages(6) clusters are labelled well
+setDT(new_predictions)
+new_predictions[ seurat_clusters == 1, predicted.id := "Neutrophils"]
+new_predictions[ seurat_clusters == 0, predicted.id := "Neutrophils"]
+new_predictions[ seurat_clusters == 4, predicted.id := "Monocytes"]
+new_predictions[ seurat_clusters == 6, predicted.id := "Macrophages"]
+
+# Prep the edited predictions data to transfer to the query object
+new_predictions <- as.data.frame(new_predictions)
+rownames(new_predictions) <- new_predictions$seurat_ids
+
+# Add the predictions to the query object
+BM_combined_query <- AddMetaData(BM_combined_query, metadata = new_predictions)
+#BM_combined_query <- AddMetaData(BM_combined_query, metadata = predictions)
+
+
+Idents(BM_combined_query) <- BM_combined_query$predicted.id
+
+DimPlot(BM_combined_query, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+DimPlot(BM_combined_query, reduction = "umap", split.by = "TimePoint", label = TRUE, pt.size = 0.5) + NoLegend()
+```
+
+Save query labelled rds file
+```{r}
+saveRDS(BM_combined_query, file = "BM_chabaudi_query_labelled.rds")
+```
+
+
+
+Explore these marker genes for each cluster and use them to annotate our clusters as specific cell types
+```{r}
+#Proerynthroblasts
+  p <- VlnPlot(BM_chabaudi.combined,features=c("Epb42","Trim10", "Tspan33", "Ermap", "Klf1", "Slc4a1")) +
+    ggtitle(paste(files.list[i],"UMAP-Proerynthroblasts", sep = "  "))
+  print(p)
+  FeaturePlot(BM_chabaudi.combined,features=c("Epb42","Trim10", "Tspan33", "Ermap", "Klf1", "Slc4a1"), min.cutoff = "q9")
+  
+#Erynthroblasts
+  p <- VlnPlot(BM_chabaudi.combined,features=c("Hba-a1", "Hbb-bt", "Hba-a2", "Hbb-bs", "Alas2", "Bpgm")) +
+    ggtitle(paste(files.list[i],"UMAP-Erynthroblasts", sep = "  "))
+  print(p)
+  FeaturePlot(BM_chabaudi.combined,features=c("Hba-a1", "Hbb-bt", "Hba-a2", "Hbb-bs", "Alas2", "Bpgm"), min.cutoff = "q9")
+
+  #B-cells
+  p <- VlnPlot(BM_chabaudi.combined,features=c("Cd79a", "Cd79b", "Bank1", "Ighd", "Blnk", "Cd74")) +
+    ggtitle(paste(files.list[i],"UMAP-B Cells", sep = "  "))
+  print(p)
+  FeaturePlot(BM_chabaudi.combined,features=c("Cd79a", "Cd79b", "Bank1", "Ighd", "Blnk", "Cd74"), min.cutoff = "q9")
+  
+#T-cells
+  p <- VlnPlot(BM_chabaudi.combined,features=c("Ccl5", "Ms4a4b",	"Thy1",	"Gimap4", "Gimap3", "Cd3d")) +
+    ggtitle(paste(files.list[i],"UMAP-T cells", sep = "  "))
+  print(p) 
+  FeaturePlot(BM_chabaudi.combined,features=c("Ccl5", "Ms4a4b",	"Thy1",	"Gimap4", "Gimap3", "Cd3d"), min.cutoff = "q9")
+  
+#DCs
+  p <- VlnPlot(BM_chabaudi.combined,features=c("Siglech",	"Havcr1",	"Ccr9",	"Grm8", "Slc41a2", "Ddr1")) +
+    ggtitle(paste(files.list[i],"UMAP-DCs", sep = "  "))
+  print(p) 
+  FeaturePlot(BM_chabaudi.combined,features=c("Siglech",	"Havcr1",	"Ccr9",	"Grm8", "Slc41a2", "Ddr1"), min.cutoff = "q9")
+
+# Monocytes or Macrophages
+  p <- VlnPlot(BM_chabaudi.combined,features=c("Ccl9", "Lrp1", "Ptpro", "Clec4a3", "Fn1", "Pid1")) +
+    ggtitle(paste(files.list[i],"UMAP-Monocytes or Macrophages", sep = "  "))
+  print(p) 
+  FeaturePlot(BM_chabaudi.combined,features=c("Ccl9", "Lrp1", "Ptpro", "Clec4a3", "Fn1", "Pid1"), min.cutoff = "q9")
+  
+# Macrophages or are they monocytes
+  p <- VlnPlot(BM_chabaudi.combined,features=c("Clec4a3",	"Sdc3",	"Dse",	"Clec4b1", "Csf1r", "Cd14")) +
+    ggtitle(paste(files.list[i],"UMAP-Macrophages or Monocytes", sep = "  "))
+  print(p) 
+  FeaturePlot(BM_chabaudi.combined,features=c("Clec4a3",	"Sdc3",	"Dse",	"Clec4b1", "Csf1r", "Cd14"), min.cutoff = "q9")
+
+# Neutrophils/Granuloctyes
+  p <- VlnPlot(BM_chabaudi.combined,features=c("Orm1", "Fcnb", "Cebpe", "Ms4a3", "rna_Mogat2", "Ncam1")) +
+    ggtitle(paste(files.list[i],"UMAP-Neutrophils/Granuloctyes", sep = "  "))
+  print(p) 
+  FeaturePlot(BM_chabaudi.combined,features=c("Orm1", "Fcnb", "Cebpe", "Ms4a3", "rna_Mogat2", "Ncam1"), min.cutoff = "q9")
+  
+```
+
+
+Multiple cluster exploration of top genes in the clusters
+```{r}
+# This loop just runs the FindMarkers function on all of the clusters
+lapply(
+  levels(BM_chabaudi.combined[["seurat_clusters"]][[1]]),
+  function(x)FindConservedMarkers(BM_chabaudi.combined,ident.1 = x,min.pct = 0.25, grouping.var = "TimePoint")
+) -> BM_cluster.markers
+
+
+# This simply adds the cluster number to the results of FindMarkers
+sapply(0:(length(BM_cluster.markers)-1),function(x) {
+  BM_cluster.markers[[x+1]]$gene <<- rownames(BM_cluster.markers[[x+1]])
+  BM_cluster.markers[[x+1]]$cluster <<- x
+})
+
+# Finally we collapse the list of hits down to a single table and sort it by FDR to put the most significant ones first
+library(data.table)
+rbindlist(BM_cluster.markers,fill=TRUE) -> test
+test %>% arrange(cluster,"TP_N1_p_val_adj") -> BM_cluster.markers.test
+
+#as_tibble(rbindlist(BM_cluster.markers,fill=TRUE) %>% arrange(p_val_adj)) -> cluster.markers.test
+#cluster.markers
+
+
+
+
+```
+
+
+```{r}
+BM_cluster_markers <- FindAllMarkers(BM_chabaudi.combined)
+library(tibble)
+as.data.frame(BM_cluster_markers) %>%
+  group_by(cluster) %>%
+    slice_head(n= 12) %>%
+      pull(gene) -> top20_gene.per.cluster
+
+VlnPlot(BM_chabaudi.combined,features=top20_gene.per.cluster[1:6])
+VlnPlot(BM_chabaudi.combined,features=top20_gene.per.cluster[7:12])
+VlnPlot(BM_chabaudi.combined,features=top20_gene.per.cluster[13:18])
+VlnPlot(BM_chabaudi.combined,features=top20_gene.per.cluster[19:24])
+VlnPlot(BM_chabaudi.combined,features=top20_gene.per.cluster[25:30])
+VlnPlot(BM_chabaudi.combined,features=top20_gene.per.cluster[31:36])
+VlnPlot(BM_chabaudi.combined,features=top20_gene.per.cluster[37:42])
+
+FeaturePlot(BM_chabaudi.combined,features=top20_gene.per.cluster[1:6], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=top20_gene.per.cluster[7:12], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=top20_gene.per.cluster[13:18], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=top20_gene.per.cluster[19:24], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=top20_gene.per.cluster[25:30], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=top20_gene.per.cluster[31:36], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=top20_gene.per.cluster[37:42], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=top20_gene.per.cluster[43:48], min.cutoff = "q9")
+
+```
+
+
+Top 12 genes per cluster- Violin plots
+```{r The top 12 expressed genes per cluster}
+# We can extract from this list the most upregulated gene from each cluster
+library(tibble)
+as.data.frame(test) %>%
+  group_by(cluster) %>%
+    slice_head(n= 12) %>%
+      pull(gene) -> best.wilcox.gene.per.cluster
+
+best.wilcox.gene.per.cluster
+# We can then plot these out.
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[1:6])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[7:12])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[13:18])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[19:24])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[25:30])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[31:36])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[37:42])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[43:48])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[49:54])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[55:60])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[61:66])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[67:72])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[73:78])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[79:84])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[85:90])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[91:96])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[97:102])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[103:108])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[109:114])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[115:120])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[121:126])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[127:132])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[133:138])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[139:144])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[145:150])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[151:156])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[157:162])
+VlnPlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[163:168])
+
+```
+
+
+Top 12 genes per cluster- Feature plots
+```{r}
+# We can then plot violin plots for the same 
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[1:6], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[7:12], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[13:18], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[19:24], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[25:30], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[31:36], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[37:42], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[43:48], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[49:54], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[55:60], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[61:66], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[67:72], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[73:78], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[79:84], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[85:90], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[91:96], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[97:102], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[103:108], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[109:114], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[115:120], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[121:126], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[127:132], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[133:138], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[139:144], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[145:150], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[151:156], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[157:162], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=best.wilcox.gene.per.cluster[163:168], min.cutoff = "q9")
+
+
+```
+
+
+
+Clusters 0 and 1 top 30 markers
+```{r}
+library(tibble)
+as.data.frame(subset(test, cluster < 12)) %>%
+  group_by(cluster) %>%
+    slice_head(n= 30) %>%
+      pull(gene) -> clusters_zero_and_one
+
+FeaturePlot(BM_chabaudi.combined,features=clusters_zero_and_one[1:6], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=clusters_zero_and_one[7:12], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=clusters_zero_and_one[13:18], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=clusters_zero_and_one[19:24], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=clusters_zero_and_one[25:30], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=clusters_zero_and_one[31:36], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=clusters_zero_and_one[37:42], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=clusters_zero_and_one[43:48], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=clusters_zero_and_one[49:54], min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=clusters_zero_and_one[55:60], min.cutoff = "q9")
+
+```
+
+
+The markers for each cell: FeaturePlots 
+```{r}
+FeaturePlot(BM_chabaudi.combined,features=c("Mpo","Ctsg", "Cdk6", "Nkg7", "Ramp1", "Mt1"), min.cutoff = "q9") 
+FeaturePlot(BM_chabaudi.combined,features=c("Mpo"), min.cutoff = "q9") 
+FeaturePlot(BM_chabaudi.combined,features=c("Ctsg"), min.cutoff = "q9")
+FeaturePlot(BM_chabaudi.combined,features=c("Klf4"), min.cutoff = "q9") 
+FeaturePlot(BM_chabaudi.combined,features=c("Cd300c"), min.cutoff = "q9") 
+```
+
+
+The markers for each cell: ViolinPlots
+```{r}
+cluster_markers <- c("rna_Clec4d", "Chil3", "rna_Mmp8", "Nrg1", "Klf1", "Cebpe", "Vpreb3", "Fn1",
+                       "Flt3", "Slfn14", "Cd3e", "Ms4a1", "rna_Hba-a2", "Chchd10")
+cluster_num <- c(1:length(cluster_markers)-1)
+for (i in 1:length(cluster_num)) {
+  p <- FeaturePlot(BM_chabaudi.combined, features=cluster_markers[i], min.cutoff = "q9") + 
+    ggtitle(paste("Cluster_", cluster_num[i],"   Marker gene:", cluster_markers[i], sep = ""))+
+    NoLegend() + theme(plot.title = element_text(hjust = 0.5, size=28))
+  print(p)
+  
+  p <- VlnPlot(BM_chabaudi.combined, features = cluster_markers[i]) + 
+    ggtitle(paste("Cluster_", cluster_num[i],"   Marker gene:", cluster_markers[i], sep = "")) + 
+    NoLegend() + theme(plot.title = element_text(hjust = 0.5, size=28))
+  
+  print(p)
+}
+
+#"Iglc2",
+```
+
+
+
+Finding where the HSPCs are!
+```{r}
+#List of marker genes forHSPCs
+hspcs_marker_genes <- c("Mpo", "Ctsg", "Cdk6", "Nkg7", "Ramp1", "Mt1", "Ctla2a", "Spns2", "Serpina3g", "Gata2", "Cst7")
+for (item in hspcs_marker_genes) {
+  p <- VlnPlot(BM_chabaudi.combined,features= item) + 
+    ggtitle(paste(item, "Cluster of HSPCs")) + 
+    NoLegend() + theme(plot.title = element_text(hjust = 0.5, size=28))
+  print(p)
+  p <- FeaturePlot(BM_chabaudi.combined,features=item, min.cutoff = "q9") +
+    ggtitle(paste(item, "Cluster of HSPCs")) + NoLegend() + 
+    theme(plot.title = element_text(hjust = 0.5, size=28))
+ print(p)
+}
+
+```
+
+
+```{r}
+
+BM_chabaudi.combined <- BM_combined_query
+
+## Integrated data
+DimPlot(BM_chabaudi.combined, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+DimPlot(BM_chabaudi.combined, reduction = "umap", label = TRUE, pt.size = 0.5) 
+DimPlot(BM_chabaudi.combined, reduction = "umap", label = FALSE, pt.size = 0.5) 
+
+# Splits per timepoint
+for (i in unique(BM_chabaudi.combined@meta.data[["TimePoint"]])) {
+  p <- DimPlot(subset(BM_chabaudi.combined , subset=TimePoint == i), 
+        reduction = "umap", label = TRUE, repel = TRUE, pt.size = 0.5)+ NoLegend() + ggtitle(i)
+  print(p)
+}
+
+
+```
+
+
+Frequency table shortcut
+```{r}
+BM_chabaudi.combined$cell_types <- Idents(BM_chabaudi.combined)
+
+freq.table.group <- as.data.frame(prop.table(x = table(subset(BM_chabaudi.combined, subset = TimePoint != "TP_T1")$cell_types,
+                                                       subset(BM_chabaudi.combined, subset = TimePoint != "TP_T1")$TimePoint), margin = 2))
+ggplot(data=freq.table.group, aes(x=freq.table.group$Var2, y = freq.table.group$Freq, fill=freq.table.group$Var1)) + geom_bar(stat="identity",color="black") +
+labs(x="Time Point", y="Proportion of cells",fill="Cell Type") + 
+  scale_x_discrete(limits = (levels(freq.table.group$Var2)))
+
+ggplot(data = subset(freq.table.group, Var2 != "TP_T1"), # excluding trial timepoint
+        aes(x = Var2, y = Freq, group = Var1)) +
+   geom_col(fill = "white", colour = "black")+ 
+   geom_line(aes(color = Var1)) + 
+   geom_point(aes(color = Var1))+
+   facet_wrap(~Var1, scales = "free") + 
+    labs(x="Time Point", y="Proportion of cells",fill="Cell Type") +
+   theme_classic() + theme(axis.text.x = element_text(angle = -45,hjust =0 ))+ NoLegend() + 
+   theme(plot.title = element_text(size=40))
+
+
+# Subsetting for myeloid cells and others
+
+  ### Subset object for myeloid cells
+selected <- WhichCells(BM_chabaudi.combined, idents = 
+                         c("Neutrophils", "DCs", "Macrophages"))
+combined_myeloid <- subset(BM_chabaudi.combined, cells = selected)
+freq.table.group <- as.data.frame(prop.table(x = table(Idents(combined_myeloid),
+                                                       combined_myeloid$TimePoint), margin = 2))
+ggplot(data=freq.table.group, aes(x=freq.table.group$Var2, y = freq.table.group$Freq, fill=freq.table.group$Var1)) + geom_bar(stat="identity",color="black") +
+labs(x="Time Point", y="Proportion of cells",fill="Cell Type") + 
+  scale_x_discrete(limits = (levels(freq.table.group$Var2)))
+
+### Subset object to exclude erythroblasts
+selected <- WhichCells(BM_chabaudi.combined, idents = 
+                         c("Neutrophils", "B cells", "Pro-B cells", "Pre-B cells", "T cells", "Monocytes", "DCs", "Macrophages", "Neutrophil Progenitors"))
+combined_myeloid <- subset(BM_chabaudi.combined, cells = selected)
+freq.table.group <- as.data.frame(prop.table(x = table(Idents(combined_myeloid),
+                                                       combined_myeloid$TimePoint), margin = 2))
+ggplot(data=freq.table.group, aes(x=freq.table.group$Var2, y = freq.table.group$Freq, fill=freq.table.group$Var1)) + geom_bar(stat="identity",color="black") +
+labs(x="Time Point", y="Proportion of cells",fill="Cell Type") + 
+  scale_x_discrete(limits = (levels(freq.table.group$Var2)))
+
+
+ggplot(data = subset(freq.table.group, Var2 != "TP_T1"), # excluding trial timepoint
+        aes(x = Var2, y = Freq, group = Var1)) +
+   geom_col(fill = "white", colour = "black")+ 
+   geom_line(aes(color = Var1)) + 
+   geom_point(aes(color = Var1))+
+   facet_wrap(~Var1, scales = "free") + 
+    labs(x="Time Point", y="Proportion of cells",fill="Cell Type") +
+   theme_classic() + theme(axis.text.x = element_text(angle = -45,hjust =0 ))+ NoLegend() + 
+   theme(plot.title = element_text(size=40))
+
+# checking if mice duplicates contribute equally to the cell no.s observed
+BM_chabaudi.combined$mouse.tp.ids <- paste(BM_chabaudi.combined$TimePoint, 
+                                              BM_chabaudi.combined$consensuscall, sep = "_")
+freq.table.group <- as.data.frame(prop.table(x = table(Idents(BM_chabaudi.combined),
+                                                       BM_chabaudi.combined$mouse.tp.ids), margin = 2))
+ggplot(data=freq.table.group, aes(x=freq.table.group$Var2, y = freq.table.group$Freq, fill=freq.table.group$Var1)) + geom_bar(stat="identity",color="black") +
+labs(x="Time Point", y="Proportion of cells",fill="Cell Type") + 
+  scale_x_discrete(limits = (levels(freq.table.group$Var2)))+
+  theme_classic() + theme(axis.text.x = element_text(angle = -45,hjust = 0 ))
+
+
+``` 
+
+
